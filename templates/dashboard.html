@@ -201,7 +201,7 @@
         <p id="editModalError" class="hidden text-sm text-red-600"></p>
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" id="editModalCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-          <button type="submit" id="editModalSaveBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Save changes</button>
+          <button type="submit" id="editModalSaveBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed">Save changes</button>
         </div>
       </form>
     </div>
@@ -216,6 +216,19 @@
         <button type="button" id="confirmCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
         <button type="button" id="confirmOkBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed">Delete</button>
       </div>
+    </div>
+  </div>
+
+  <div id="progressModal" class="hidden fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 px-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200 p-6 text-center" role="status" aria-live="polite" aria-busy="true">
+      <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+        <svg class="h-6 w-6 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </div>
+      <h3 id="progressModalTitle" class="text-lg font-semibold text-slate-900">Working…</h3>
+      <p id="progressModalMessage" class="text-sm text-slate-600 mt-2">Please wait.</p>
     </div>
   </div>
 
@@ -266,6 +279,10 @@
     const confirmCancelBtn = document.getElementById("confirmCancelBtn");
     const confirmOkBtn = document.getElementById("confirmOkBtn");
     const confirmOkDefaultHtml = confirmOkBtn.innerHTML;
+    const progressModal = document.getElementById("progressModal");
+    const progressModalTitle = document.getElementById("progressModalTitle");
+    const progressModalMessage = document.getElementById("progressModalMessage");
+    const editModalSaveDefaultHtml = editModalSaveBtn.innerHTML;
 
     let selectedStatus = "";
     let searchDebounceTimer = null;
@@ -341,6 +358,16 @@
         throw new Error("Your session has expired. Please sign in again.");
       }
       return response;
+    }
+
+    function showProgress(title, message) {
+      progressModalTitle.textContent = title || "Working…";
+      progressModalMessage.textContent = message || "Please wait.";
+      progressModal.classList.remove("hidden");
+    }
+
+    function hideProgress() {
+      progressModal.classList.add("hidden");
     }
 
     function askConfirm(message) {
@@ -738,9 +765,16 @@
 
       const formData = new FormData();
       formData.append("client_name", name);
-      if (editPdfFile.files[0]) formData.append("file", editPdfFile.files[0]);
+      const hasPdf = Boolean(editPdfFile.files[0]);
+      if (hasPdf) formData.append("file", editPdfFile.files[0]);
 
       editModalSaveBtn.disabled = true;
+      editModalSaveBtn.innerHTML =
+        '<svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' +
+        (hasPdf ? "Uploading…" : "Saving…");
+      if (hasPdf) {
+        showProgress("Uploading PDF…", `Updating ${editingSlip.client_code}. Please wait.`);
+      }
       try {
         const response = await apiFetch(
           `/api/slips/${encodeURIComponent(editingSlip.client_code)}/${encodeURIComponent(editingSlip.trade_date)}`,
@@ -755,7 +789,9 @@
         editModalError.textContent = error.message;
         editModalError.classList.remove("hidden");
       } finally {
+        hideProgress();
         editModalSaveBtn.disabled = false;
+        editModalSaveBtn.innerHTML = editModalSaveDefaultHtml;
       }
     }
 
@@ -899,8 +935,11 @@
 
     async function uploadCsv(file) {
       if (!file || !isAuthenticated) return;
-      uploadStatusEl.textContent = "Uploading and generating slips...";
+      uploadStatusEl.innerHTML =
+        '<span class="inline-flex items-center gap-2"><svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Uploading and generating slips…</span>';
       uploadStatusEl.className = "text-sm mt-3 text-blue-600";
+      showProgress("Uploading CSV…", "Generating trade slips. This may take a moment.");
+      dropZone.classList.add("pointer-events-none", "opacity-60");
 
       const formData = new FormData();
       formData.append("file", file);
@@ -916,6 +955,9 @@
       } catch (error) {
         uploadStatusEl.textContent = error.message;
         uploadStatusEl.className = "text-sm mt-3 text-red-600";
+      } finally {
+        hideProgress();
+        dropZone.classList.remove("pointer-events-none", "opacity-60");
       }
     }
 
@@ -925,6 +967,7 @@
       if (!file) return;
 
       const { clientCode, tradeDate } = pendingUploadTarget;
+      const key = `${clientCode}__${tradeDate}`;
       const formData = new FormData();
       formData.append("file", file);
       const url =
@@ -932,7 +975,10 @@
           ? `/api/upload-signed/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`
           : `/api/slips/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}/reupload-unsigned`;
 
-      setTableStatus(mode === "signed" ? "Uploading signed copy…" : "Reuploading unsigned PDF…", "info");
+      const title = mode === "signed" ? "Uploading signed copy…" : "Reuploading unsigned PDF…";
+      showProgress(title, `Uploading for ${clientCode}. Please wait.`);
+      markRowsDeleting([key]);
+      setTableStatus(title, "info");
       input.disabled = true;
       try {
         const response = await apiFetch(url, { method: "POST", body: formData });
@@ -944,8 +990,10 @@
         );
         await loadSlips();
       } catch (error) {
+        clearRowsDeleting([key]);
         setTableStatus(error.message, "error");
       } finally {
+        hideProgress();
         input.value = "";
         input.disabled = false;
         pendingUploadTarget = null;
