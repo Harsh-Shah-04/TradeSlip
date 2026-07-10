@@ -695,7 +695,25 @@
       }
     }
 
+    function removeSlipsFromUi(keysToRemove) {
+      const removeSet = new Set(keysToRemove);
+      currentSlips = currentSlips.filter((slip) => !removeSet.has(slipKey(slip)));
+      keysToRemove.forEach((key) => {
+        selectedKeys.delete(key);
+        const row = [...slipsBody.querySelectorAll("tr")].find((tr) => tr.dataset.key === key);
+        if (row) row.remove();
+      });
+      currentSlipCount = currentSlips.length;
+      slipCountEl.textContent = `${currentSlipCount} slip${currentSlipCount === 1 ? "" : "s"}`;
+      if (currentSlipCount === 0) {
+        slipsBody.innerHTML =
+          '<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">No slips for this date and filter.</td></tr>';
+      }
+      updateBulkBar();
+    }
+
     async function deleteSingleSlip(clientCode, tradeDate) {
+      const key = `${clientCode}__${tradeDate}`;
       setTableStatus("Deleting…", "info");
       try {
         const response = await apiFetch(
@@ -704,9 +722,8 @@
         );
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(parseErrorDetail(payload));
-        selectedKeys.delete(`${clientCode}__${tradeDate}`);
+        removeSlipsFromUi([key]);
         setTableStatus(`Deleted ${clientCode}.`, "success");
-        await loadSlips();
       } catch (error) {
         setTableStatus(error.message, "error");
       }
@@ -715,8 +732,12 @@
     async function bulkDeleteSelected() {
       if (selectedKeys.size === 0) return;
       const items = [...selectedKeys].map((key) => {
-        const [client_code, trade_date] = key.split("__");
-        return { client_code, trade_date };
+        const idx = key.indexOf("__");
+        return {
+          client_code: key.slice(0, idx),
+          trade_date: key.slice(idx + 2),
+          key,
+        };
       });
       const ok = await askConfirm(
         `Delete ${items.length} selected slip(s)? This permanently removes database rows and PDFs from storage.`
@@ -728,12 +749,24 @@
         const response = await apiFetch("/api/slips/bulk-delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items }),
+          body: JSON.stringify({
+            items: items.map(({ client_code, trade_date }) => ({ client_code, trade_date })),
+          }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(parseErrorDetail(payload));
-        selectedKeys.clear();
-        const deleted = payload.deleted_count || 0;
+
+        const deletedKeys = (payload.deleted || []).map(
+          (item) => `${item.client_code}__${item.trade_date}`
+        );
+        // If API didn't return item list, fall back to all selected when fully successful
+        if (deletedKeys.length === 0 && (payload.deleted_count || 0) > 0 && !(payload.failed_count || 0)) {
+          removeSlipsFromUi(items.map((item) => item.key));
+        } else {
+          removeSlipsFromUi(deletedKeys);
+        }
+
+        const deleted = payload.deleted_count || deletedKeys.length;
         const failed = payload.failed_count || 0;
         setTableStatus(
           failed
@@ -741,7 +774,6 @@
             : `Deleted ${deleted} slip(s).`,
           failed ? "error" : "success"
         );
-        await loadSlips();
       } catch (error) {
         setTableStatus(error.message, "error");
       }
