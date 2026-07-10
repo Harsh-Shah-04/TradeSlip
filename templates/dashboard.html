@@ -211,9 +211,10 @@
     <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
       <h3 id="confirmModalTitle" class="text-xl font-semibold text-slate-900">Delete permanently?</h3>
       <p id="confirmModalMessage" class="text-sm text-slate-600 mt-2"></p>
+      <p id="confirmModalStatus" class="hidden text-sm text-blue-600 mt-3"></p>
       <div class="flex justify-end gap-2 mt-6">
         <button type="button" id="confirmCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        <button type="button" id="confirmOkBtn" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete</button>
+        <button type="button" id="confirmOkBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed">Delete</button>
       </div>
     </div>
   </div>
@@ -261,8 +262,10 @@
 
     const confirmModal = document.getElementById("confirmModal");
     const confirmModalMessage = document.getElementById("confirmModalMessage");
+    const confirmModalStatus = document.getElementById("confirmModalStatus");
     const confirmCancelBtn = document.getElementById("confirmCancelBtn");
     const confirmOkBtn = document.getElementById("confirmOkBtn");
+    const confirmOkDefaultHtml = confirmOkBtn.innerHTML;
 
     let selectedStatus = "";
     let searchDebounceTimer = null;
@@ -277,6 +280,7 @@
     let pendingUploadTarget = null;
     let editingSlip = null;
     let confirmResolver = null;
+    let confirmBusy = false;
 
     function todayIso() {
       const d = new Date();
@@ -340,6 +344,13 @@
     }
 
     function askConfirm(message) {
+      confirmBusy = false;
+      confirmCancelBtn.disabled = false;
+      confirmOkBtn.disabled = false;
+      confirmOkBtn.innerHTML = confirmOkDefaultHtml;
+      confirmModalStatus.classList.add("hidden");
+      confirmModalStatus.textContent = "";
+      confirmModalStatus.classList.remove("text-red-600", "text-blue-600");
       confirmModalMessage.textContent = message;
       confirmModal.classList.remove("hidden");
       return new Promise((resolve) => {
@@ -347,13 +358,66 @@
       });
     }
 
+    function setConfirmBusy(busy, statusText) {
+      confirmBusy = busy;
+      confirmCancelBtn.disabled = busy;
+      confirmOkBtn.disabled = busy;
+      if (busy) {
+        confirmOkBtn.innerHTML =
+          '<svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Deleting…';
+        confirmModalStatus.textContent = statusText || "Deleting from database and storage…";
+        confirmModalStatus.classList.remove("hidden", "text-red-600");
+        confirmModalStatus.classList.add("text-blue-600");
+      } else {
+        confirmOkBtn.innerHTML = confirmOkDefaultHtml;
+      }
+    }
+
     function closeConfirm(result) {
+      if (confirmBusy && !result) return;
       confirmModal.classList.add("hidden");
+      confirmBusy = false;
+      confirmCancelBtn.disabled = false;
+      confirmOkBtn.disabled = false;
+      confirmOkBtn.innerHTML = confirmOkDefaultHtml;
       if (confirmResolver) {
         const resolve = confirmResolver;
         confirmResolver = null;
         resolve(result);
       }
+    }
+
+    function acceptConfirm() {
+      if (confirmBusy) return;
+      if (!confirmResolver) {
+        confirmModal.classList.add("hidden");
+        confirmOkBtn.innerHTML = confirmOkDefaultHtml;
+        confirmModalStatus.classList.add("hidden");
+        return;
+      }
+      const resolve = confirmResolver;
+      confirmResolver = null;
+      resolve(true);
+    }
+
+    function markRowsDeleting(keys) {
+      keys.forEach((key) => {
+        const row = [...slipsBody.querySelectorAll("tr")].find((tr) => tr.dataset.key === key);
+        if (row) {
+          row.classList.add("opacity-50", "pointer-events-none");
+          row.setAttribute("aria-busy", "true");
+        }
+      });
+    }
+
+    function clearRowsDeleting(keys) {
+      keys.forEach((key) => {
+        const row = [...slipsBody.querySelectorAll("tr")].find((tr) => tr.dataset.key === key);
+        if (row) {
+          row.classList.remove("opacity-50", "pointer-events-none");
+          row.removeAttribute("aria-busy");
+        }
+      });
     }
 
     async function checkSession() {
@@ -714,6 +778,8 @@
 
     async function deleteSingleSlip(clientCode, tradeDate) {
       const key = `${clientCode}__${tradeDate}`;
+      setConfirmBusy(true, `Deleting ${clientCode}…`);
+      markRowsDeleting([key]);
       setTableStatus("Deleting…", "info");
       try {
         const response = await apiFetch(
@@ -723,8 +789,19 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(parseErrorDetail(payload));
         removeSlipsFromUi([key]);
+        confirmModal.classList.add("hidden");
+        confirmBusy = false;
+        confirmCancelBtn.disabled = false;
+        confirmOkBtn.disabled = false;
+        confirmOkBtn.innerHTML = confirmOkDefaultHtml;
         setTableStatus(`Deleted ${clientCode}.`, "success");
       } catch (error) {
+        clearRowsDeleting([key]);
+        setConfirmBusy(false);
+        confirmOkBtn.textContent = "Close";
+        confirmModalStatus.textContent = error.message;
+        confirmModalStatus.classList.remove("hidden", "text-blue-600");
+        confirmModalStatus.classList.add("text-red-600");
         setTableStatus(error.message, "error");
       }
     }
@@ -744,6 +821,9 @@
       );
       if (!ok) return;
 
+      const keys = items.map((item) => item.key);
+      setConfirmBusy(true, `Deleting ${items.length} slip(s)…`);
+      markRowsDeleting(keys);
       setTableStatus("Deleting selected slips…", "info");
       try {
         const response = await apiFetch("/api/slips/bulk-delete", {
@@ -759,15 +839,20 @@
         const deletedKeys = (payload.deleted || []).map(
           (item) => `${item.client_code}__${item.trade_date}`
         );
-        // If API didn't return item list, fall back to all selected when fully successful
         if (deletedKeys.length === 0 && (payload.deleted_count || 0) > 0 && !(payload.failed_count || 0)) {
-          removeSlipsFromUi(items.map((item) => item.key));
+          removeSlipsFromUi(keys);
         } else {
           removeSlipsFromUi(deletedKeys);
+          clearRowsDeleting(keys.filter((key) => !deletedKeys.includes(key)));
         }
 
         const deleted = payload.deleted_count || deletedKeys.length;
         const failed = payload.failed_count || 0;
+        confirmModal.classList.add("hidden");
+        confirmBusy = false;
+        confirmCancelBtn.disabled = false;
+        confirmOkBtn.disabled = false;
+        confirmOkBtn.innerHTML = confirmOkDefaultHtml;
         setTableStatus(
           failed
             ? `Deleted ${deleted}, failed ${failed}.`
@@ -775,6 +860,12 @@
           failed ? "error" : "success"
         );
       } catch (error) {
+        clearRowsDeleting(keys);
+        setConfirmBusy(false);
+        confirmOkBtn.textContent = "Close";
+        confirmModalStatus.textContent = error.message;
+        confirmModalStatus.classList.remove("hidden", "text-blue-600");
+        confirmModalStatus.classList.add("text-red-600");
         setTableStatus(error.message, "error");
       }
     }
@@ -924,7 +1015,7 @@
     editModalCloseBtn.addEventListener("click", closeEditModal);
     editModalCancelBtn.addEventListener("click", closeEditModal);
     confirmCancelBtn.addEventListener("click", () => closeConfirm(false));
-    confirmOkBtn.addEventListener("click", () => closeConfirm(true));
+    confirmOkBtn.addEventListener("click", acceptConfirm);
 
     hiddenSignedUpload.addEventListener("change", () => handleHiddenUpload(hiddenSignedUpload, "signed"));
     hiddenUnsignedUpload.addEventListener("change", () => handleHiddenUpload(hiddenUnsignedUpload, "unsigned"));
