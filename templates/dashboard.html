@@ -132,29 +132,90 @@
     </section>
 
     <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-        <h2 class="text-lg font-semibold">Trade Slips</h2>
-        <span id="slipCount" class="text-sm text-slate-500">0 slips</span>
+      <div class="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <h2 class="text-lg font-semibold">Trade Slips</h2>
+          <span id="slipCount" class="text-sm text-slate-500">0 slips</span>
+        </div>
+        <p id="tableStatus" class="text-sm text-slate-500 hidden"></p>
       </div>
+
+      <div id="bulkBar" class="hidden px-6 py-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p class="text-sm font-medium text-slate-700">
+          <span id="selectedCount">0</span> selected
+        </p>
+        <div class="flex items-center gap-2">
+          <button type="button" id="clearSelectionBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Clear</button>
+          <button type="button" id="bulkDeleteBtn" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700">Delete selected</button>
+        </div>
+      </div>
+
       <div class="overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
             <tr>
-              <th class="px-6 py-3">Client Code</th>
-              <th class="px-6 py-3">Client Name</th>
-              <th class="px-6 py-3">Trade Date</th>
-              <th class="px-6 py-3">Status</th>
-              <th class="px-6 py-3">Actions</th>
+              <th class="px-4 py-3 w-12">
+                <input type="checkbox" id="selectAllSlips" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" aria-label="Select all slips" />
+              </th>
+              <th class="px-4 py-3">Client Code</th>
+              <th class="px-4 py-3">Client Name</th>
+              <th class="px-4 py-3">Trade Date</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="slipsBody" class="divide-y divide-slate-100">
             <tr>
-              <td colspan="5" class="px-6 py-8 text-center text-slate-500">Loading slips...</td>
+              <td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading slips...</td>
             </tr>
           </tbody>
         </table>
       </div>
     </section>
+  </div>
+
+  <input type="file" id="hiddenSignedUpload" accept=".pdf,application/pdf" class="hidden" />
+  <input type="file" id="hiddenUnsignedUpload" accept=".pdf,application/pdf" class="hidden" />
+
+  <div id="editModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+    <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+      <div class="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h3 id="editModalTitle" class="text-xl font-semibold text-slate-900">Edit slip</h3>
+          <p id="editModalSubtitle" class="text-sm text-slate-500 mt-1"></p>
+        </div>
+        <button type="button" id="editModalCloseBtn" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <form id="editSlipForm" class="space-y-4">
+        <div>
+          <label for="editClientName" class="block text-sm font-medium text-slate-700 mb-1">Client name</label>
+          <input type="text" id="editClientName" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label for="editPdfFile" class="block text-sm font-medium text-slate-700 mb-1">Replace PDF <span class="text-slate-400 font-normal">(optional)</span></label>
+          <input type="file" id="editPdfFile" accept=".pdf,application/pdf" class="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700" />
+          <p class="text-xs text-slate-500 mt-1">Replacing the PDF keeps the current status. Use “Reupload unsigned” from the menu to force Unsigned.</p>
+        </div>
+        <p id="editModalError" class="hidden text-sm text-red-600"></p>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" id="editModalCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button type="submit" id="editModalSaveBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
+    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <h3 id="confirmModalTitle" class="text-xl font-semibold text-slate-900">Delete permanently?</h3>
+      <p id="confirmModalMessage" class="text-sm text-slate-600 mt-2"></p>
+      <div class="flex justify-end gap-2 mt-6">
+        <button type="button" id="confirmCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="button" id="confirmOkBtn" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete</button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -174,11 +235,34 @@
     const clientSearchEl = document.getElementById("clientSearch");
     const slipsBody = document.getElementById("slipsBody");
     const slipCountEl = document.getElementById("slipCount");
+    const tableStatusEl = document.getElementById("tableStatus");
     const dropZone = document.getElementById("dropZone");
     const csvInput = document.getElementById("csvInput");
     const uploadStatusEl = document.getElementById("uploadStatus");
     const statusButtons = document.querySelectorAll(".status-btn");
     const downloadZipBtn = document.getElementById("downloadZipBtn");
+    const selectAllEl = document.getElementById("selectAllSlips");
+    const bulkBar = document.getElementById("bulkBar");
+    const selectedCountEl = document.getElementById("selectedCount");
+    const clearSelectionBtn = document.getElementById("clearSelectionBtn");
+    const bulkDeleteBtn = document.getElementById("bulkDeleteBtn");
+    const hiddenSignedUpload = document.getElementById("hiddenSignedUpload");
+    const hiddenUnsignedUpload = document.getElementById("hiddenUnsignedUpload");
+
+    const editModal = document.getElementById("editModal");
+    const editSlipForm = document.getElementById("editSlipForm");
+    const editModalSubtitle = document.getElementById("editModalSubtitle");
+    const editClientName = document.getElementById("editClientName");
+    const editPdfFile = document.getElementById("editPdfFile");
+    const editModalError = document.getElementById("editModalError");
+    const editModalSaveBtn = document.getElementById("editModalSaveBtn");
+    const editModalCloseBtn = document.getElementById("editModalCloseBtn");
+    const editModalCancelBtn = document.getElementById("editModalCancelBtn");
+
+    const confirmModal = document.getElementById("confirmModal");
+    const confirmModalMessage = document.getElementById("confirmModalMessage");
+    const confirmCancelBtn = document.getElementById("confirmCancelBtn");
+    const confirmOkBtn = document.getElementById("confirmOkBtn");
 
     let selectedStatus = "";
     let searchDebounceTimer = null;
@@ -187,12 +271,22 @@
     const SEARCH_DEBOUNCE_MS = 300;
     let currentSlipCount = 0;
     let isAuthenticated = false;
+    let currentSlips = [];
+    let selectedKeys = new Set();
+    let openMenuKey = null;
+    let pendingUploadTarget = null;
+    let editingSlip = null;
+    let confirmResolver = null;
 
     function todayIso() {
       const d = new Date();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       return `${d.getFullYear()}-${m}-${day}`;
+    }
+
+    function slipKey(slip) {
+      return `${slip.client_code}__${slip.trade_date}`;
     }
 
     function setAuthenticated(authenticated) {
@@ -204,7 +298,23 @@
         loginPasswordEl.value = "";
         loginErrorEl.classList.add("hidden");
         loginErrorEl.textContent = "";
+        selectedKeys.clear();
+        currentSlips = [];
+        updateBulkBar();
       }
+    }
+
+    function setTableStatus(message, tone) {
+      if (!message) {
+        tableStatusEl.classList.add("hidden");
+        tableStatusEl.textContent = "";
+        return;
+      }
+      tableStatusEl.textContent = message;
+      tableStatusEl.classList.remove("hidden", "text-slate-500", "text-green-600", "text-red-600", "text-blue-600");
+      tableStatusEl.classList.add(
+        tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : tone === "info" ? "text-blue-600" : "text-slate-500"
+      );
     }
 
     function parseErrorDetail(payload) {
@@ -227,6 +337,23 @@
         throw new Error("Your session has expired. Please sign in again.");
       }
       return response;
+    }
+
+    function askConfirm(message) {
+      confirmModalMessage.textContent = message;
+      confirmModal.classList.remove("hidden");
+      return new Promise((resolve) => {
+        confirmResolver = resolve;
+      });
+    }
+
+    function closeConfirm(result) {
+      confirmModal.classList.add("hidden");
+      if (confirmResolver) {
+        const resolve = confirmResolver;
+        confirmResolver = null;
+        resolve(result);
+      }
     }
 
     async function checkSession() {
@@ -288,29 +415,22 @@
 
     async function viewSlipFile(storagePath) {
       if (!storagePath || !isAuthenticated) return;
-
       const params = new URLSearchParams({ path: storagePath });
       try {
         const response = await apiFetch("/api/slips/sign-url?" + params.toString());
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(parseErrorDetail(payload));
-        }
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
         const signedUrl = payload.signed_url || payload.signedURL;
-        if (!signedUrl) {
-          throw new Error("Signed URL was not returned by the server.");
-        }
+        if (!signedUrl) throw new Error("Signed URL was not returned by the server.");
         openWithCacheBust(signedUrl);
       } catch (error) {
-        alert(error.message);
+        setTableStatus(error.message, "error");
       }
     }
 
     function scheduleDebouncedLoadSlips() {
       clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(() => {
-        loadSlips();
-      }, SEARCH_DEBOUNCE_MS);
+      searchDebounceTimer = setTimeout(() => loadSlips(), SEARCH_DEBOUNCE_MS);
     }
 
     function setStatusButtons(activeStatus) {
@@ -338,28 +458,129 @@
         .replace(/"/g, "&quot;");
     }
 
+    function updateBulkBar() {
+      const count = selectedKeys.size;
+      selectedCountEl.textContent = String(count);
+      bulkBar.classList.toggle("hidden", count === 0);
+      const visibleKeys = currentSlips.map(slipKey);
+      const allSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selectedKeys.has(key));
+      selectAllEl.checked = allSelected;
+      selectAllEl.indeterminate = count > 0 && !allSelected && visibleKeys.some((key) => selectedKeys.has(key));
+    }
+
+    function closeAllMenus() {
+      openMenuKey = null;
+      document.querySelectorAll(".actions-menu").forEach((menu) => menu.classList.add("hidden"));
+      document.querySelectorAll(".actions-menu-btn").forEach((btn) => btn.setAttribute("aria-expanded", "false"));
+    }
+
     function renderActions(slip) {
+      const key = escapeHtml(slipKey(slip));
       const storagePath = escapeHtml(slip.storage_path || "");
-      if (slip.status === "Signed") {
-        return `<button type="button" class="view-signed text-blue-600 hover:underline font-medium" data-storage-path="${storagePath}">View Signed Slip</button>`;
-      }
+      const clientCode = escapeHtml(slip.client_code);
+      const tradeDate = escapeHtml(slip.trade_date);
+      const viewLabel = slip.status === "Signed" ? "View signed slip" : "View slip";
       return `
-        <div class="flex flex-col sm:flex-row sm:items-center gap-2">
-          <button type="button" class="view-slip text-blue-600 hover:underline font-medium" data-storage-path="${storagePath}">View Slip</button>
-          <label class="inline-flex cursor-pointer">
-            <input type="file" accept=".pdf,application/pdf" class="signed-upload sr-only" data-client-code="${escapeHtml(slip.client_code)}" data-trade-date="${escapeHtml(slip.trade_date)}" />
-            <span class="px-3 py-1 rounded-md bg-slate-800 text-white text-xs font-medium hover:bg-slate-700">Upload Signed Copy</span>
-          </label>
+        <div class="relative flex justify-end">
+          <button type="button" class="actions-menu-btn inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-slate-700 hover:bg-slate-50" data-key="${key}" aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${clientCode}">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" /></svg>
+          </button>
+          <div class="actions-menu hidden absolute right-0 top-full z-20 mt-1 w-56 rounded-xl border border-slate-200 bg-white py-1 shadow-lg" data-key="${key}" role="menu">
+            <button type="button" class="menu-view w-full px-3 py-2 text-left text-sm hover:bg-slate-50" data-storage-path="${storagePath}" role="menuitem">${viewLabel}</button>
+            <button type="button" class="menu-edit w-full px-3 py-2 text-left text-sm hover:bg-slate-50" data-key="${key}" role="menuitem">Edit</button>
+            <button type="button" class="menu-reupload w-full px-3 py-2 text-left text-sm hover:bg-slate-50" data-client-code="${clientCode}" data-trade-date="${tradeDate}" role="menuitem">Reupload unsigned PDF</button>
+            <button type="button" class="menu-signed w-full px-3 py-2 text-left text-sm hover:bg-slate-50" data-client-code="${clientCode}" data-trade-date="${tradeDate}" role="menuitem">Upload signed copy</button>
+            <div class="my-1 border-t border-slate-100"></div>
+            <button type="button" class="menu-delete w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50" data-client-code="${clientCode}" data-trade-date="${tradeDate}" role="menuitem">Delete</button>
+          </div>
         </div>
       `;
+    }
+
+    function bindRowInteractions() {
+      document.querySelectorAll(".slip-checkbox").forEach((box) => {
+        box.addEventListener("change", () => {
+          const key = box.dataset.key;
+          if (box.checked) selectedKeys.add(key);
+          else selectedKeys.delete(key);
+          updateBulkBar();
+        });
+      });
+
+      document.querySelectorAll(".actions-menu-btn").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const key = btn.dataset.key;
+          const menu = [...document.querySelectorAll(".actions-menu")].find((el) => el.dataset.key === key);
+          const isOpen = openMenuKey === key;
+          closeAllMenus();
+          if (!isOpen && menu) {
+            menu.classList.remove("hidden");
+            btn.setAttribute("aria-expanded", "true");
+            openMenuKey = key;
+          }
+        });
+      });
+
+      document.querySelectorAll(".menu-view").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          closeAllMenus();
+          viewSlipFile(btn.dataset.storagePath);
+        });
+      });
+
+      document.querySelectorAll(".menu-edit").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          closeAllMenus();
+          const slip = currentSlips.find((item) => slipKey(item) === btn.dataset.key);
+          if (slip) openEditModal(slip);
+        });
+      });
+
+      document.querySelectorAll(".menu-reupload").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          closeAllMenus();
+          pendingUploadTarget = {
+            mode: "unsigned",
+            clientCode: btn.dataset.clientCode,
+            tradeDate: btn.dataset.tradeDate,
+          };
+          hiddenUnsignedUpload.value = "";
+          hiddenUnsignedUpload.click();
+        });
+      });
+
+      document.querySelectorAll(".menu-signed").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          closeAllMenus();
+          pendingUploadTarget = {
+            mode: "signed",
+            clientCode: btn.dataset.clientCode,
+            tradeDate: btn.dataset.tradeDate,
+          };
+          hiddenSignedUpload.value = "";
+          hiddenSignedUpload.click();
+        });
+      });
+
+      document.querySelectorAll(".menu-delete").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          closeAllMenus();
+          const clientCode = btn.dataset.clientCode;
+          const tradeDate = btn.dataset.tradeDate;
+          const ok = await askConfirm(
+            `Delete ${clientCode} for ${tradeDate}? This permanently removes the database row and the PDF from storage.`
+          );
+          if (!ok) return;
+          await deleteSingleSlip(clientCode, tradeDate);
+        });
+      });
     }
 
     async function loadSlips() {
       if (!isAuthenticated) return;
 
-      if (slipsFetchController) {
-        slipsFetchController.abort();
-      }
+      if (slipsFetchController) slipsFetchController.abort();
       slipsFetchController = new AbortController();
       const fetchSignal = slipsFetchController.signal;
       const requestId = ++loadSlipsRequestId;
@@ -370,65 +591,164 @@
       const search = clientSearchEl.value.trim();
       if (search) params.set("search", search);
 
-      slipsBody.innerHTML = '<tr><td colspan="5" class="px-6 py-8 text-center text-slate-500">Loading slips...</td></tr>';
+      selectedKeys.clear();
+      updateBulkBar();
+      closeAllMenus();
+      slipsBody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading slips...</td></tr>';
 
       try {
-        const response = await apiFetch("/api/slips?" + params.toString(), {
-          signal: fetchSignal,
-        });
+        const response = await apiFetch("/api/slips?" + params.toString(), { signal: fetchSignal });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
           throw new Error(parseErrorDetail(err));
         }
         const slips = await response.json();
-        if (requestId !== loadSlipsRequestId) {
-          return;
-        }
+        if (requestId !== loadSlipsRequestId) return;
 
+        currentSlips = slips;
         currentSlipCount = slips.length;
         slipCountEl.textContent = `${slips.length} slip${slips.length === 1 ? "" : "s"}`;
 
         if (slips.length === 0) {
-          slipsBody.innerHTML = '<tr><td colspan="5" class="px-6 py-8 text-center text-slate-500">No slips for this date and filter.</td></tr>';
+          slipsBody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">No slips for this date and filter.</td></tr>';
+          updateBulkBar();
           return;
         }
 
         slipsBody.innerHTML = slips
-          .map(
-            (slip) => `
-          <tr class="hover:bg-slate-50">
-            <td class="px-6 py-4 font-mono font-medium">${escapeHtml(slip.client_code)}</td>
-            <td class="px-6 py-4">${escapeHtml(slip.client_name)}</td>
-            <td class="px-6 py-4">${escapeHtml(slip.trade_date)}</td>
-            <td class="px-6 py-4">${statusBadge(slip.status)}</td>
-            <td class="px-6 py-4">${renderActions(slip)}</td>
-          </tr>
-        `
-          )
+          .map((slip) => {
+            const key = slipKey(slip);
+            return `
+          <tr class="hover:bg-slate-50" data-key="${escapeHtml(key)}">
+            <td class="px-4 py-4">
+              <input type="checkbox" class="slip-checkbox h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" data-key="${escapeHtml(key)}" aria-label="Select ${escapeHtml(slip.client_code)}" />
+            </td>
+            <td class="px-4 py-4 font-mono font-medium">${escapeHtml(slip.client_code)}</td>
+            <td class="px-4 py-4">${escapeHtml(slip.client_name)}</td>
+            <td class="px-4 py-4">${escapeHtml(slip.trade_date)}</td>
+            <td class="px-4 py-4">${statusBadge(slip.status)}</td>
+            <td class="px-4 py-4">${renderActions(slip)}</td>
+          </tr>`;
+          })
           .join("");
 
-        document.querySelectorAll(".view-slip, .view-signed").forEach((btn) => {
-          btn.addEventListener("click", () => viewSlipFile(btn.dataset.storagePath));
-        });
-
-        document.querySelectorAll(".signed-upload").forEach((input) => {
-          input.addEventListener("change", () => uploadSignedCopy(input));
-        });
+        bindRowInteractions();
+        updateBulkBar();
       } catch (error) {
-        if (error.name === "AbortError") {
-          return;
-        }
-        if (requestId !== loadSlipsRequestId) {
-          return;
-        }
+        if (error.name === "AbortError") return;
+        if (requestId !== loadSlipsRequestId) return;
         currentSlipCount = 0;
-        slipsBody.innerHTML = `<tr><td colspan="5" class="px-6 py-8 text-center text-red-600">${escapeHtml(error.message)}</td></tr>`;
+        currentSlips = [];
+        slipsBody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-red-600">${escapeHtml(error.message)}</td></tr>`;
+        updateBulkBar();
+      }
+    }
+
+    function openEditModal(slip) {
+      editingSlip = slip;
+      editModalSubtitle.textContent = `${slip.client_code} · ${slip.trade_date} · ${slip.status}`;
+      editClientName.value = slip.client_name || "";
+      editPdfFile.value = "";
+      editModalError.classList.add("hidden");
+      editModalError.textContent = "";
+      editModal.classList.remove("hidden");
+      editClientName.focus();
+    }
+
+    function closeEditModal() {
+      editModal.classList.add("hidden");
+      editingSlip = null;
+      editSlipForm.reset();
+    }
+
+    async function saveEditSlip(event) {
+      event.preventDefault();
+      if (!editingSlip) return;
+
+      const name = editClientName.value.trim();
+      if (!name) {
+        editModalError.textContent = "Client name is required.";
+        editModalError.classList.remove("hidden");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("client_name", name);
+      if (editPdfFile.files[0]) formData.append("file", editPdfFile.files[0]);
+
+      editModalSaveBtn.disabled = true;
+      try {
+        const response = await apiFetch(
+          `/api/slips/${encodeURIComponent(editingSlip.client_code)}/${encodeURIComponent(editingSlip.trade_date)}`,
+          { method: "PATCH", body: formData }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        closeEditModal();
+        setTableStatus("Slip updated.", "success");
+        await loadSlips();
+      } catch (error) {
+        editModalError.textContent = error.message;
+        editModalError.classList.remove("hidden");
+      } finally {
+        editModalSaveBtn.disabled = false;
+      }
+    }
+
+    async function deleteSingleSlip(clientCode, tradeDate) {
+      setTableStatus("Deleting…", "info");
+      try {
+        const response = await apiFetch(
+          `/api/slips/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`,
+          { method: "DELETE" }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        selectedKeys.delete(`${clientCode}__${tradeDate}`);
+        setTableStatus(`Deleted ${clientCode}.`, "success");
+        await loadSlips();
+      } catch (error) {
+        setTableStatus(error.message, "error");
+      }
+    }
+
+    async function bulkDeleteSelected() {
+      if (selectedKeys.size === 0) return;
+      const items = [...selectedKeys].map((key) => {
+        const [client_code, trade_date] = key.split("__");
+        return { client_code, trade_date };
+      });
+      const ok = await askConfirm(
+        `Delete ${items.length} selected slip(s)? This permanently removes database rows and PDFs from storage.`
+      );
+      if (!ok) return;
+
+      setTableStatus("Deleting selected slips…", "info");
+      try {
+        const response = await apiFetch("/api/slips/bulk-delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        selectedKeys.clear();
+        const deleted = payload.deleted_count || 0;
+        const failed = payload.failed_count || 0;
+        setTableStatus(
+          failed
+            ? `Deleted ${deleted}, failed ${failed}.`
+            : `Deleted ${deleted} slip(s).`,
+          failed ? "error" : "success"
+        );
+        await loadSlips();
+      } catch (error) {
+        setTableStatus(error.message, "error");
       }
     }
 
     async function downloadDayZip() {
       if (!isAuthenticated) return;
-
       const selectedDate = tradeDateEl.value;
       if (!selectedDate) {
         alert("Please select a trade date first.");
@@ -436,9 +756,7 @@
       }
       if (currentSlipCount === 0) {
         try {
-          const response = await apiFetch(
-            `/api/slips?trade_date=${encodeURIComponent(selectedDate)}`
-          );
+          const response = await apiFetch(`/api/slips?trade_date=${encodeURIComponent(selectedDate)}`);
           if (response.ok) {
             const slips = await response.json();
             if (slips.length > 0) {
@@ -466,14 +784,9 @@
       formData.append("trade_date", tradeDateEl.value);
 
       try {
-        const response = await apiFetch("/api/upload-trades", {
-          method: "POST",
-          body: formData,
-        });
+        const response = await apiFetch("/api/upload-trades", { method: "POST", body: formData });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(parseErrorDetail(payload));
-        }
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
         uploadStatusEl.textContent = `Generated ${payload.generated} slip(s) successfully.`;
         uploadStatusEl.className = "text-sm mt-3 text-green-600";
         await loadSlips();
@@ -483,33 +796,36 @@
       }
     }
 
-    async function uploadSignedCopy(input) {
-      if (!isAuthenticated) return;
-
+    async function handleHiddenUpload(input, mode) {
+      if (!isAuthenticated || !pendingUploadTarget || pendingUploadTarget.mode !== mode) return;
       const file = input.files[0];
       if (!file) return;
 
-      const clientCode = input.dataset.clientCode;
-      const tradeDate = input.dataset.tradeDate;
+      const { clientCode, tradeDate } = pendingUploadTarget;
       const formData = new FormData();
       formData.append("file", file);
+      const url =
+        mode === "signed"
+          ? `/api/upload-signed/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`
+          : `/api/slips/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}/reupload-unsigned`;
 
+      setTableStatus(mode === "signed" ? "Uploading signed copy…" : "Reuploading unsigned PDF…", "info");
       input.disabled = true;
       try {
-        const response = await apiFetch(
-          `/api/upload-signed/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`,
-          { method: "POST", body: formData }
-        );
+        const response = await apiFetch(url, { method: "POST", body: formData });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(parseErrorDetail(payload));
-        }
+        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        setTableStatus(
+          mode === "signed" ? `Signed copy saved for ${clientCode}.` : `Unsigned PDF replaced for ${clientCode}.`,
+          "success"
+        );
         await loadSlips();
       } catch (error) {
-        alert(error.message);
+        setTableStatus(error.message, "error");
       } finally {
         input.value = "";
         input.disabled = false;
+        pendingUploadTarget = null;
       }
     }
 
@@ -541,7 +857,6 @@
     logoutBtn.addEventListener("click", logout);
     tradeDateEl.addEventListener("change", loadSlips);
     downloadZipBtn.addEventListener("click", downloadDayZip);
-
     clientSearchEl.addEventListener("input", scheduleDebouncedLoadSlips);
 
     statusButtons.forEach((btn) => {
@@ -552,9 +867,52 @@
       });
     });
 
+    selectAllEl.addEventListener("change", () => {
+      if (selectAllEl.checked) {
+        currentSlips.forEach((slip) => selectedKeys.add(slipKey(slip)));
+      } else {
+        currentSlips.forEach((slip) => selectedKeys.delete(slipKey(slip)));
+      }
+      document.querySelectorAll(".slip-checkbox").forEach((box) => {
+        box.checked = selectAllEl.checked;
+      });
+      updateBulkBar();
+    });
+
+    clearSelectionBtn.addEventListener("click", () => {
+      selectedKeys.clear();
+      document.querySelectorAll(".slip-checkbox").forEach((box) => {
+        box.checked = false;
+      });
+      updateBulkBar();
+    });
+
+    bulkDeleteBtn.addEventListener("click", bulkDeleteSelected);
+    editSlipForm.addEventListener("submit", saveEditSlip);
+    editModalCloseBtn.addEventListener("click", closeEditModal);
+    editModalCancelBtn.addEventListener("click", closeEditModal);
+    confirmCancelBtn.addEventListener("click", () => closeConfirm(false));
+    confirmOkBtn.addEventListener("click", () => closeConfirm(true));
+
+    hiddenSignedUpload.addEventListener("change", () => handleHiddenUpload(hiddenSignedUpload, "signed"));
+    hiddenUnsignedUpload.addEventListener("change", () => handleHiddenUpload(hiddenUnsignedUpload, "unsigned"));
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".actions-menu") && !event.target.closest(".actions-menu-btn")) {
+        closeAllMenus();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeAllMenus();
+        if (!editModal.classList.contains("hidden")) closeEditModal();
+        if (!confirmModal.classList.contains("hidden")) closeConfirm(false);
+      }
+    });
+
     dropZone.addEventListener("click", () => csvInput.click());
     csvInput.addEventListener("change", (e) => handleCsvFiles(e.target.files));
-
     dropZone.addEventListener("dragover", (e) => {
       e.preventDefault();
       dropZone.classList.add("border-blue-400", "bg-blue-50/30");

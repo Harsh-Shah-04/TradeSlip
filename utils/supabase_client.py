@@ -187,6 +187,107 @@ def list_slips(
     return data if isinstance(data, list) else []
 
 
+def get_slip_row(client_code: str, trade_date_iso: str) -> dict[str, Any]:
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(),
+        params={
+            "select": "*",
+            "client_code": f"eq.{client_code}",
+            "trade_date": f"eq.{trade_date_iso}",
+            "limit": "1",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Fetch slip failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        return data[0]
+    raise LookupError(
+        f"No slip record for client {client_code!r} on trade date {trade_date_iso}."
+    )
+
+
+def update_slip_row(
+    client_code: str,
+    trade_date_iso: str,
+    *,
+    client_name: str | None = None,
+    public_url: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    patch: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if client_name is not None:
+        patch["client_name"] = client_name
+    if public_url is not None:
+        patch["public_url"] = public_url
+    if status is not None:
+        patch["status"] = status
+
+    response = httpx.patch(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+        ),
+        params={
+            "client_code": f"eq.{client_code}",
+            "trade_date": f"eq.{trade_date_iso}",
+        },
+        json=patch,
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(f"Update slip failed ({response.status_code}): {response.text[:300]}")
+    data = response.json() if response.content else []
+    if isinstance(data, list) and data:
+        return data[0]
+    raise LookupError(
+        f"No slip record for client {client_code!r} on trade date {trade_date_iso}."
+    )
+
+
+def delete_slip_row(client_code: str, trade_date_iso: str) -> None:
+    response = httpx.delete(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers({"Prefer": "return=minimal"}),
+        params={
+            "client_code": f"eq.{client_code}",
+            "trade_date": f"eq.{trade_date_iso}",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(f"Delete slip row failed ({response.status_code}): {response.text[:300]}")
+
+
+def delete_storage_object(storage_path: str) -> None:
+    """Delete a storage object. Missing files (404) are ignored."""
+    encoded = "/".join(quote(part, safe="") for part in storage_path.lstrip("/").split("/"))
+    response = httpx.delete(
+        f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{encoded}",
+        headers=_service_headers(),
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code in (200, 204, 404):
+        return
+    # Some Storage setups prefer the remove endpoint
+    remove = httpx.post(
+        f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/remove",
+        headers=_service_headers({"Content-Type": "application/json"}),
+        json={"prefixes": [storage_path.lstrip("/")]},
+        timeout=HTTP_TIMEOUT,
+    )
+    if remove.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Storage delete failed ({response.status_code}/{remove.status_code}): "
+            f"{response.text[:200]} | {remove.text[:200]}"
+        )
+
+
 def resolve_storage_path(client_code: str, trade_date_iso: str) -> str:
     return storage_path_for(client_code, trade_date_iso)
 

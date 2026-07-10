@@ -37,11 +37,15 @@ from utils.auth import (
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
 from utils.supabase_client import (
     create_signed_slip_url,
+    delete_slip_row,
+    delete_storage_object,
     download_slip_bytes,
+    get_slip_row,
     list_slips,
     mark_signed,
     resolve_blank_template_path,
     resolve_storage_path,
+    update_slip_row,
     upload_slip,
     upsert_slip_row,
 )
@@ -77,6 +81,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=256)
+
+
+class SlipRef(BaseModel):
+    client_code: str = Field(min_length=1, max_length=64)
+    trade_date: str = Field(min_length=10, max_length=10)
+
+
+class BulkDeleteRequest(BaseModel):
+    items: list[SlipRef] = Field(min_length=1, max_length=500)
 
 
 def get_template_path() -> Path:
@@ -444,6 +457,176 @@ async def upload_signed(
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
     return JSONResponse(content=payload)
+
+
+async def _read_optional_pdf(file: UploadFile | None) -> bytes | None:
+    if file is None:
+        return None
+    filename = (file.filename or "").strip()
+    if not filename:
+        return None
+    content_type = (file.content_type or "").lower()
+    if "pdf" not in content_type and not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Replacement file must be a PDF.")
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="PDF file is empty.")
+    return pdf_bytes
+
+
+@app.patch("/api/slips/{client_code}/{trade_date}")
+async def patch_slip(
+    _: BrokerAuth,
+    client_code: str,
+    trade_date: str,
+    client_name: str | None = Form(default=None),
+    file: UploadFile | None = File(default=None),
+) -> JSONResponse:
+    trade_date_iso = validate_trade_date_iso(trade_date)
+    name_value = (client_name or "").strip() or None
+    pdf_bytes = await _read_optional_pdf(file)
+
+    if name_value is None and pdf_bytes is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a client_name and/or a PDF file to update.",
+        )
+
+    try:
+        existing = await asyncio.to_thread(get_slip_row, client_code, trade_date_iso)
+        storage_path = slip_storage_path_from_row(existing, trade_date_iso)
+
+        if pdf_bytes is not None:
+            await asyncio.to_thread(upload_slip, storage_path, pdf_bytes, True)
+
+        row = await asyncio.to_thread(
+            update_slip_row,
+            client_code,
+            trade_date_iso,
+            client_name=name_value,
+            public_url=storage_path if pdf_bytes is not None else None,
+            status=None,
+        )
+        return JSONResponse(content=slip_to_json(row))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to patch slip %s %s", client_code, trade_date_iso)
+        raise HTTPException(status_code=500, detail=f"Update failed: {exc}") from exc
+
+
+@app.post("/api/slips/{client_code}/{trade_date}/reupload-unsigned")
+async def reupload_unsigned(
+    _: BrokerAuth,
+    client_code: str,
+    trade_date: str,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    trade_date_iso = validate_trade_date_iso(trade_date)
+    pdf_bytes = await _read_optional_pdf(file)
+    if pdf_bytes is None:
+        raise HTTPException(status_code=400, detail="Unsigned slip PDF is required.")
+
+    try:
+        existing = await asyncio.to_thread(get_slip_row, client_code, trade_date_iso)
+        storage_path = slip_storage_path_from_row(existing, trade_date_iso)
+        await asyncio.to_thread(upload_slip, storage_path, pdf_bytes, True)
+        row = await asyncio.to_thread(
+            update_slip_row,
+            client_code,
+            trade_date_iso,
+            public_url=storage_path,
+            status="Unsigned",
+        )
+        return JSONResponse(content=slip_to_json(row))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to reupload unsigned slip %s", client_code)
+        raise HTTPException(status_code=500, detail=f"Reupload failed: {exc}") from exc
+
+
+def _delete_slip_pair(client_code: str, trade_date_iso: str) -> None:
+    existing = get_slip_row(client_code, trade_date_iso)
+    storage_path = slip_storage_path_from_row(existing, trade_date_iso)
+    try:
+        delete_storage_object(storage_path)
+    except Exception:
+        logger.exception("Storage delete failed for %s (continuing with DB delete)", storage_path)
+    delete_slip_row(client_code, trade_date_iso)
+
+
+@app.delete("/api/slips/{client_code}/{trade_date}")
+async def delete_slip(
+    _: BrokerAuth,
+    client_code: str,
+    trade_date: str,
+) -> JSONResponse:
+    trade_date_iso = validate_trade_date_iso(trade_date)
+    try:
+        await asyncio.to_thread(_delete_slip_pair, client_code, trade_date_iso)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to delete slip %s %s", client_code, trade_date_iso)
+        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
+
+    return JSONResponse(
+        content={
+            "deleted": True,
+            "client_code": client_code,
+            "trade_date": trade_date_iso,
+        }
+    )
+
+
+@app.post("/api/slips/bulk-delete")
+async def bulk_delete_slips(
+    _: BrokerAuth,
+    payload: BulkDeleteRequest,
+) -> JSONResponse:
+    deleted: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = []
+
+    for item in payload.items:
+        try:
+            trade_date_iso = validate_trade_date_iso(item.trade_date)
+            await asyncio.to_thread(_delete_slip_pair, item.client_code, trade_date_iso)
+            deleted.append(
+                {"client_code": item.client_code, "trade_date": trade_date_iso}
+            )
+        except HTTPException as exc:
+            failed.append(
+                {
+                    "client_code": item.client_code,
+                    "trade_date": item.trade_date,
+                    "error": str(exc.detail),
+                }
+            )
+        except Exception as exc:
+            logger.exception(
+                "Bulk delete failed for %s %s", item.client_code, item.trade_date
+            )
+            failed.append(
+                {
+                    "client_code": item.client_code,
+                    "trade_date": item.trade_date,
+                    "error": str(exc),
+                }
+            )
+
+    return JSONResponse(
+        content={
+            "deleted": deleted,
+            "failed": failed,
+            "deleted_count": len(deleted),
+            "failed_count": len(failed),
+        }
+    )
 
 
 @app.get("/api/download-zip/{trade_date}")
