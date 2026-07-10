@@ -6,30 +6,37 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
+import httpx
 from fastapi import Response
-
-from utils.supabase_client import get_auth_supabase
 
 ACCESS_COOKIE_NAME = "broker_access_token"
 REFRESH_COOKIE_NAME = "broker_refresh_token"
-# Keep refresh cookie for a week; access token lifetime comes from Supabase.
 REFRESH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
-LOGIN_MAX_ATTEMPTS = 5
+LOGIN_MAX_ATTEMPTS = 8
+HTTP_TIMEOUT = 20.0
 
 logger = logging.getLogger(__name__)
 _failed_logins: dict[str, deque[float]] = defaultdict(deque)
 
 
+def _env(name: str, *aliases: str) -> str:
+    for key in (name, *aliases):
+        value = os.environ.get(key, "").strip().strip('"').strip("'")
+        if value:
+            return value
+    return ""
+
+
 def _is_production() -> bool:
     return (
         os.environ.get("VERCEL", "").strip() == "1"
-        or os.environ.get("ENVIRONMENT", "").strip().lower() == "production"
+        or _env("ENVIRONMENT").lower() == "production"
     )
 
 
 def cookie_secure_enabled() -> bool:
-    explicit = os.environ.get("COOKIE_SECURE", "").strip().lower()
+    explicit = _env("COOKIE_SECURE").lower()
     if explicit in ("true", "1", "yes"):
         return True
     if explicit in ("false", "0", "no"):
@@ -38,30 +45,34 @@ def cookie_secure_enabled() -> bool:
 
 
 def get_allowed_emails() -> set[str]:
-    raw = os.environ.get("ALLOWED_EMAIL", os.environ.get("ALLOWED_EMAILS", "")).strip()
+    raw = _env("ALLOWED_EMAIL", "ALLOWED_EMAILS")
     if not raw:
         return set()
     return {part.strip().lower() for part in raw.split(",") if part.strip()}
 
 
+def _supabase_url() -> str:
+    return _env("SUPABASE_URL").rstrip("/")
+
+
+def _anon_key() -> str:
+    return _env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY")
+
+
 def validate_auth_config() -> None:
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    service_key = os.environ.get("SUPABASE_KEY", "").strip()
-    anon_key = (
-        os.environ.get("SUPABASE_ANON_KEY", "").strip()
-        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
-    )
+    url = _supabase_url()
+    service_key = _env("SUPABASE_KEY")
+    anon_key = _anon_key()
     if not url or not service_key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in the environment.")
     if not anon_key:
         raise RuntimeError(
-            "SUPABASE_ANON_KEY must be set (Supabase → Project Settings → API → anon public). "
-            "Login uses the anon key; storage uses the service-role key."
+            "SUPABASE_ANON_KEY must be set (Supabase → Project Settings → API → anon public)."
         )
     if not get_allowed_emails():
         raise RuntimeError(
             "ALLOWED_EMAIL must be set to the Supabase Auth user email that may access "
-            "this dashboard (example: father@example.com)."
+            "this dashboard."
         )
 
 
@@ -71,102 +82,116 @@ def is_email_allowed(email: str | None) -> bool:
     return email.strip().lower() in get_allowed_emails()
 
 
-def _user_email(user: Any) -> str | None:
-    if user is None:
-        return None
-    email = getattr(user, "email", None)
-    if email:
-        return str(email)
-    if isinstance(user, dict):
-        value = user.get("email")
-        return str(value) if value else None
-    return None
+def _auth_headers(bearer: str | None = None) -> dict[str, str]:
+    anon = _anon_key()
+    token = bearer or anon
+    return {
+        "apikey": anon,
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
 
 
 def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
-    """Authenticate against Supabase Auth. Returns access_token, refresh_token, expires_in."""
-    from gotrue.errors import AuthApiError
-
-    client = get_auth_supabase()
+    """Authenticate against Supabase Auth via HTTP (reliable on Vercel)."""
     normalized_email = email.strip().lower()
+    url = f"{_supabase_url()}/auth/v1/token?grant_type=password"
     try:
-        result = client.auth.sign_in_with_password(
-            {"email": normalized_email, "password": password}
+        response = httpx.post(
+            url,
+            headers=_auth_headers(),
+            json={"email": normalized_email, "password": password},
+            timeout=HTTP_TIMEOUT,
         )
-    except AuthApiError as exc:
-        message = (getattr(exc, "message", None) or str(exc) or "").strip()
-        logger.warning("Supabase AuthApiError for %s: %s", normalized_email, message)
-        lowered = message.lower()
-        if "confirm" in lowered or "not confirmed" in lowered:
-            raise PermissionError(
-                "Email is not confirmed in Supabase. Turn off Confirm email "
-                "(Authentication → Providers → Email) or confirm this user, then try again."
-            ) from exc
-        if message:
-            raise PermissionError(message) from exc
-        raise PermissionError("Invalid email or password.") from exc
     except Exception as exc:
-        logger.warning("Supabase sign-in failed for %s: %s", normalized_email, exc)
-        raise PermissionError("Invalid email or password.") from exc
+        logger.exception("Supabase login request failed")
+        raise PermissionError(f"Could not reach Supabase Auth: {exc}") from exc
 
-    session = getattr(result, "session", None)
-    user = getattr(result, "user", None)
-    if session is None or user is None:
-        raise PermissionError("Invalid email or password.")
-
-    email_value = _user_email(user)
-    if not is_email_allowed(email_value):
+    if response.status_code != 200:
+        payload: dict[str, Any] = {}
         try:
-            client.auth.sign_out()
+            payload = response.json()
         except Exception:
             pass
+        message = (
+            str(payload.get("msg") or payload.get("error_description") or payload.get("error") or "")
+            .strip()
+        )
+        logger.warning(
+            "Supabase login rejected for %s status=%s body=%s",
+            normalized_email,
+            response.status_code,
+            response.text[:300],
+        )
+        lowered = message.lower()
+        if "confirm" in lowered:
+            raise PermissionError(
+                "Email is not confirmed in Supabase. Disable Confirm email, then try again."
+            )
+        if message:
+            raise PermissionError(message)
+        raise PermissionError("Invalid email or password.")
+
+    data = response.json()
+    access_token = str(data.get("access_token") or "")
+    refresh_token = str(data.get("refresh_token") or "")
+    expires_in = int(data.get("expires_in") or 3600)
+    user = data.get("user") or {}
+    email_value = str(user.get("email") or normalized_email)
+
+    if not access_token or not refresh_token:
+        raise PermissionError("Supabase did not return a valid session.")
+
+    if not is_email_allowed(email_value):
         raise PermissionError(
             f"Signed in as {email_value!r}, but ALLOWED_EMAIL does not include this address."
         )
 
-    access_token = getattr(session, "access_token", None) or ""
-    refresh_token = getattr(session, "refresh_token", None) or ""
-    expires_in = int(getattr(session, "expires_in", None) or 3600)
-    if not access_token or not refresh_token:
-        raise PermissionError("Supabase did not return a valid session.")
     return access_token, refresh_token, expires_in
 
 
-def get_user_from_access_token(access_token: str) -> Any | None:
+def get_user_from_access_token(access_token: str) -> dict[str, Any] | None:
     if not access_token:
         return None
-    client = get_auth_supabase()
     try:
-        result = client.auth.get_user(access_token)
+        response = httpx.get(
+            f"{_supabase_url()}/auth/v1/user",
+            headers=_auth_headers(access_token),
+            timeout=HTTP_TIMEOUT,
+        )
     except Exception:
         return None
-    user = getattr(result, "user", None)
-    if user is None:
+    if response.status_code != 200:
         return None
-    if not is_email_allowed(_user_email(user)):
+    user = response.json()
+    email = user.get("email") if isinstance(user, dict) else None
+    if not is_email_allowed(str(email) if email else None):
         return None
-    return user
+    return user if isinstance(user, dict) else None
 
 
 def refresh_session_tokens(refresh_token: str) -> tuple[str, str, int] | None:
     if not refresh_token:
         return None
-    client = get_auth_supabase()
     try:
-        result = client.auth.refresh_session(refresh_token)
+        response = httpx.post(
+            f"{_supabase_url()}/auth/v1/token?grant_type=refresh_token",
+            headers=_auth_headers(),
+            json={"refresh_token": refresh_token},
+            timeout=HTTP_TIMEOUT,
+        )
     except Exception:
         return None
-
-    session = getattr(result, "session", None)
-    user = getattr(result, "user", None)
-    if session is None:
+    if response.status_code != 200:
         return None
-    if user is not None and not is_email_allowed(_user_email(user)):
+    data = response.json()
+    access_token = str(data.get("access_token") or "")
+    new_refresh = str(data.get("refresh_token") or refresh_token)
+    expires_in = int(data.get("expires_in") or 3600)
+    user = data.get("user") or {}
+    email = user.get("email") if isinstance(user, dict) else None
+    if email is not None and not is_email_allowed(str(email)):
         return None
-
-    access_token = getattr(session, "access_token", None) or ""
-    new_refresh = getattr(session, "refresh_token", None) or refresh_token
-    expires_in = int(getattr(session, "expires_in", None) or 3600)
     if not access_token:
         return None
     return access_token, new_refresh, expires_in
@@ -176,7 +201,7 @@ def resolve_authenticated_user(
     access_token: str | None,
     refresh_token: str | None,
     response: Response | None = None,
-) -> Any | None:
+) -> dict[str, Any] | None:
     user = get_user_from_access_token(access_token or "")
     if user is not None:
         return user
@@ -235,13 +260,14 @@ def clear_auth_cookies(response: Response) -> None:
 
 
 def sign_out_supabase(access_token: str | None, refresh_token: str | None) -> None:
-    if not access_token and not refresh_token:
+    if not access_token:
         return
-    client = get_auth_supabase()
     try:
-        if access_token and refresh_token:
-            client.auth.set_session(access_token, refresh_token)
-        client.auth.sign_out()
+        httpx.post(
+            f"{_supabase_url()}/auth/v1/logout",
+            headers=_auth_headers(access_token),
+            timeout=HTTP_TIMEOUT,
+        )
     except Exception:
         pass
 
