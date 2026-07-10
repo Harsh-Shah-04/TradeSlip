@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trade Slip Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+  <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm px-4">
+    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-8">
+      <div class="text-center mb-6">
+        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h2 class="text-2xl font-bold text-slate-900">Broker Sign In</h2>
+        <p class="text-slate-600 text-sm mt-1">Sign in with your Supabase account to access trade slips.</p>
+      </div>
+      <form id="loginForm" class="space-y-4">
+        <div>
+          <label for="loginEmail" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+          <input
+            type="email"
+            id="loginEmail"
+            autocomplete="username"
+            required
+            class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="you@example.com"
+          />
+        </div>
+        <div>
+          <label for="loginPassword" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+          <input
+            type="password"
+            id="loginPassword"
+            autocomplete="current-password"
+            required
+            class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Password"
+          />
+        </div>
+        <p id="loginError" class="hidden text-sm text-red-600"></p>
+        <button
+          type="submit"
+          id="loginSubmitBtn"
+          class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+        >
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div id="dashboardApp" class="hidden max-w-7xl mx-auto px-4 py-8">
+    <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-900">Trade Slip Dashboard</h1>
+        <p class="text-slate-600 mt-1">Upload daily trade CSV, track unsigned slips, and store signed copies.</p>
+      </div>
+      <button
+        type="button"
+        id="logoutBtn"
+        class="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6a2 2 0 012 2v1" />
+        </svg>
+        Logout
+      </button>
+    </header>
+
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+      <h2 class="text-lg font-semibold mb-4">Filters &amp; Upload</h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div>
+          <label for="tradeDate" class="block text-sm font-medium text-slate-700 mb-1">Trade Date</label>
+          <div class="flex gap-2">
+            <input type="date" id="tradeDate" class="flex-1 min-w-0 rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button
+              type="button"
+              id="downloadZipBtn"
+              class="inline-flex items-center gap-2 shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              title="Download all slips for this date as a ZIP"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
+              </svg>
+              <span class="hidden sm:inline">Download Day ZIP</span>
+              <span class="sm:hidden">ZIP</span>
+            </button>
+          </div>
+        </div>
+        <div>
+          <label for="clientSearch" class="block text-sm font-medium text-slate-700 mb-1">Client Code</label>
+          <input type="text" id="clientSearch" placeholder="Search client code..." class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div class="md:col-span-2">
+          <span class="block text-sm font-medium text-slate-700 mb-1">Status</span>
+          <div class="flex gap-2" id="statusFilters">
+            <button type="button" data-status="" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-blue-600 text-white">All</button>
+            <button type="button" data-status="Unsigned" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Unsigned</button>
+            <button type="button" data-status="Signed" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Signed</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
+        <input type="file" id="csvInput" accept=".csv" class="hidden" />
+        <p class="text-slate-700 font-medium">Drag &amp; drop daily master trade CSV here</p>
+        <p class="text-slate-500 text-sm mt-1">or click to browse</p>
+        <p id="uploadStatus" class="text-sm mt-3 text-slate-600"></p>
+      </div>
+    </section>
+
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-lg font-semibold">Trade Slips</h2>
+        <span id="slipCount" class="text-sm text-slate-500">0 slips</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="px-6 py-3">Client Code</th>
+              <th class="px-6 py-3">Client Name</th>
+              <th class="px-6 py-3">Trade Date</th>
+              <th class="px-6 py-3">Status</th>
+              <th class="px-6 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="slipsBody" class="divide-y divide-slate-100">
+            <tr>
+              <td colspan="5" class="px-6 py-8 text-center text-slate-500">Loading slips...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const loginOverlay = document.getElementById("loginOverlay");
+    const dashboardApp = document.getElementById("dashboardApp");
+    const loginForm = document.getElementById("loginForm");
+    const loginEmailEl = document.getElementById("loginEmail");
+    const loginPasswordEl = document.getElementById("loginPassword");
+    const loginErrorEl = document.getElementById("loginError");
+    const loginSubmitBtn = document.getElementById("loginSubmitBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    const tradeDateEl = document.getElementById("tradeDate");
+    const clientSearchEl = document.getElementById("clientSearch");
+    const slipsBody = document.getElementById("slipsBody");
+    const slipCountEl = document.getElementById("slipCount");
+    const dropZone = document.getElementById("dropZone");
+    const csvInput = document.getElementById("csvInput");
+    const uploadStatusEl = document.getElementById("uploadStatus");
+    const statusButtons = document.querySelectorAll(".status-btn");
+    const downloadZipBtn = document.getElementById("downloadZipBtn");
+
+    let selectedStatus = "";
+    let searchDebounceTimer = null;
+    let slipsFetchController = null;
+    let loadSlipsRequestId = 0;
+    const SEARCH_DEBOUNCE_MS = 300;
+    let currentSlipCount = 0;
+    let isAuthenticated = false;
+
+    function todayIso() {
+      const d = new Date();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    }
+
+    function setAuthenticated(authenticated) {
+      isAuthenticated = authenticated;
+      loginOverlay.classList.toggle("hidden", authenticated);
+      dashboardApp.classList.toggle("hidden", !authenticated);
+      if (!authenticated) {
+        loginEmailEl.value = "";
+        loginPasswordEl.value = "";
+        loginErrorEl.classList.add("hidden");
+        loginErrorEl.textContent = "";
+      }
+    }
+
+    function parseErrorDetail(payload) {
+      const detail = payload && payload.detail;
+      if (!detail) return "Request failed.";
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((item) => item.msg || JSON.stringify(item)).join(", ");
+      }
+      return "Request failed.";
+    }
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        credentials: "include",
+      });
+      if (response.status === 401) {
+        setAuthenticated(false);
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+      return response;
+    }
+
+    async function checkSession() {
+      try {
+        const response = await fetch("/api/auth/session", { credentials: "include" });
+        if (response.ok) {
+          setAuthenticated(true);
+          tradeDateEl.value = todayIso();
+          setStatusButtons("");
+          await loadSlips();
+          return;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+      setAuthenticated(false);
+    }
+
+    async function login(email, password) {
+      loginSubmitBtn.disabled = true;
+      loginErrorEl.classList.add("hidden");
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email, password }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(parseErrorDetail(payload) || "Invalid email or password.");
+        }
+        setAuthenticated(true);
+        tradeDateEl.value = todayIso();
+        setStatusButtons("");
+        await loadSlips();
+      } catch (error) {
+        loginErrorEl.textContent = error.message;
+        loginErrorEl.classList.remove("hidden");
+      } finally {
+        loginSubmitBtn.disabled = false;
+      }
+    }
+
+    async function logout() {
+      try {
+        await fetch("/api/logout", { method: "POST", credentials: "include" });
+      } catch (error) {
+        console.error(error);
+      }
+      setAuthenticated(false);
+    }
+
+    function openWithCacheBust(url) {
+      if (!url) return;
+      const separator = url.includes("?") ? "&" : "?";
+      window.open(url + separator + "t=" + new Date().getTime(), "_blank");
+    }
+
+    async function viewSlipFile(storagePath) {
+      if (!storagePath || !isAuthenticated) return;
+
+      const params = new URLSearchParams({ path: storagePath });
+      try {
+        const response = await apiFetch("/api/slips/sign-url?" + params.toString());
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(parseErrorDetail(payload));
+        }
+        const signedUrl = payload.signed_url || payload.signedURL;
+        if (!signedUrl) {
+          throw new Error("Signed URL was not returned by the server.");
+        }
+        openWithCacheBust(signedUrl);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    function scheduleDebouncedLoadSlips() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        loadSlips();
+      }, SEARCH_DEBOUNCE_MS);
+    }
+
+    function setStatusButtons(activeStatus) {
+      statusButtons.forEach((btn) => {
+        const isActive = btn.dataset.status === activeStatus;
+        btn.classList.toggle("bg-blue-600", isActive);
+        btn.classList.toggle("text-white", isActive);
+        btn.classList.toggle("bg-white", !isActive);
+        btn.classList.toggle("hover:bg-slate-50", !isActive);
+      });
+    }
+
+    function statusBadge(status) {
+      if (status === "Signed") {
+        return '<span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">Signed</span>';
+      }
+      return '<span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">Unsigned</span>';
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderActions(slip) {
+      const storagePath = escapeHtml(slip.storage_path || "");
+      if (slip.status === "Signed") {
+        return `<button type="button" class="view-signed text-blue-600 hover:underline font-medium" data-storage-path="${storagePath}">View Signed Slip</button>`;
+      }
+      return `
+        <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+          <button type="button" class="view-slip text-blue-600 hover:underline font-medium" data-storage-path="${storagePath}">View Slip</button>
+          <label class="inline-flex cursor-pointer">
+            <input type="file" accept=".pdf,application/pdf" class="signed-upload sr-only" data-client-code="${escapeHtml(slip.client_code)}" data-trade-date="${escapeHtml(slip.trade_date)}" />
+            <span class="px-3 py-1 rounded-md bg-slate-800 text-white text-xs font-medium hover:bg-slate-700">Upload Signed Copy</span>
+          </label>
+        </div>
+      `;
+    }
+
+    async function loadSlips() {
+      if (!isAuthenticated) return;
+
+      if (slipsFetchController) {
+        slipsFetchController.abort();
+      }
+      slipsFetchController = new AbortController();
+      const fetchSignal = slipsFetchController.signal;
+      const requestId = ++loadSlipsRequestId;
+
+      const params = new URLSearchParams();
+      params.set("trade_date", tradeDateEl.value);
+      if (selectedStatus) params.set("status", selectedStatus);
+      const search = clientSearchEl.value.trim();
+      if (search) params.set("search", search);
+
+      slipsBody.innerHTML = '<tr><td colspan="5" class="px-6 py-8 text-center text-slate-500">Loading slips...</td></tr>';
+
+      try {
+        const response = await apiFetch("/api/slips?" + params.toString(), {
+          signal: fetchSignal,
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(parseErrorDetail(err));
+        }
+        const slips = await response.json();
+        if (requestId !== loadSlipsRequestId) {
+          return;
+        }
+
+        currentSlipCount = slips.length;
+        slipCountEl.textContent = `${slips.length} slip${slips.length === 1 ? "" : "s"}`;
+
+        if (slips.length === 0) {
+          slipsBody.innerHTML = '<tr><td colspan="5" class="px-6 py-8 text-center text-slate-500">No slips for this date and filter.</td></tr>';
+          return;
+        }
+
+        slipsBody.innerHTML = slips
+          .map(
+            (slip) => `
+          <tr class="hover:bg-slate-50">
+            <td class="px-6 py-4 font-mono font-medium">${escapeHtml(slip.client_code)}</td>
+            <td class="px-6 py-4">${escapeHtml(slip.client_name)}</td>
+            <td class="px-6 py-4">${escapeHtml(slip.trade_date)}</td>
+            <td class="px-6 py-4">${statusBadge(slip.status)}</td>
+            <td class="px-6 py-4">${renderActions(slip)}</td>
+          </tr>
+        `
+          )
+          .join("");
+
+        document.querySelectorAll(".view-slip, .view-signed").forEach((btn) => {
+          btn.addEventListener("click", () => viewSlipFile(btn.dataset.storagePath));
+        });
+
+        document.querySelectorAll(".signed-upload").forEach((input) => {
+          input.addEventListener("change", () => uploadSignedCopy(input));
+        });
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return;
+        }
+        if (requestId !== loadSlipsRequestId) {
+          return;
+        }
+        currentSlipCount = 0;
+        slipsBody.innerHTML = `<tr><td colspan="5" class="px-6 py-8 text-center text-red-600">${escapeHtml(error.message)}</td></tr>`;
+      }
+    }
+
+    async function downloadDayZip() {
+      if (!isAuthenticated) return;
+
+      const selectedDate = tradeDateEl.value;
+      if (!selectedDate) {
+        alert("Please select a trade date first.");
+        return;
+      }
+      if (currentSlipCount === 0) {
+        try {
+          const response = await apiFetch(
+            `/api/slips?trade_date=${encodeURIComponent(selectedDate)}`
+          );
+          if (response.ok) {
+            const slips = await response.json();
+            if (slips.length > 0) {
+              window.location.href = `/api/download-zip/${encodeURIComponent(selectedDate)}`;
+              return;
+            }
+          }
+        } catch (error) {
+          console.error(error);
+          if (!isAuthenticated) return;
+        }
+        alert("There are no trade slips to download for this date yet. Upload a daily CSV first.");
+        return;
+      }
+      window.location.href = `/api/download-zip/${encodeURIComponent(selectedDate)}`;
+    }
+
+    async function uploadCsv(file) {
+      if (!file || !isAuthenticated) return;
+      uploadStatusEl.textContent = "Uploading and generating slips...";
+      uploadStatusEl.className = "text-sm mt-3 text-blue-600";
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("trade_date", tradeDateEl.value);
+
+      try {
+        const response = await apiFetch("/api/upload-trades", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(parseErrorDetail(payload));
+        }
+        uploadStatusEl.textContent = `Generated ${payload.generated} slip(s) successfully.`;
+        uploadStatusEl.className = "text-sm mt-3 text-green-600";
+        await loadSlips();
+      } catch (error) {
+        uploadStatusEl.textContent = error.message;
+        uploadStatusEl.className = "text-sm mt-3 text-red-600";
+      }
+    }
+
+    async function uploadSignedCopy(input) {
+      if (!isAuthenticated) return;
+
+      const file = input.files[0];
+      if (!file) return;
+
+      const clientCode = input.dataset.clientCode;
+      const tradeDate = input.dataset.tradeDate;
+      const formData = new FormData();
+      formData.append("file", file);
+
+      input.disabled = true;
+      try {
+        const response = await apiFetch(
+          `/api/upload-signed/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`,
+          { method: "POST", body: formData }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(parseErrorDetail(payload));
+        }
+        await loadSlips();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        input.value = "";
+        input.disabled = false;
+      }
+    }
+
+    function handleCsvFiles(files) {
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        uploadStatusEl.textContent = "Please upload a CSV file.";
+        uploadStatusEl.className = "text-sm mt-3 text-red-600";
+        return;
+      }
+      uploadCsv(file);
+    }
+
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      login(loginEmailEl.value.trim(), loginPasswordEl.value);
+    });
+
+    logoutBtn.addEventListener("click", logout);
+    tradeDateEl.addEventListener("change", loadSlips);
+    downloadZipBtn.addEventListener("click", downloadDayZip);
+
+    clientSearchEl.addEventListener("input", scheduleDebouncedLoadSlips);
+
+    statusButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedStatus = btn.dataset.status;
+        setStatusButtons(selectedStatus);
+        loadSlips();
+      });
+    });
+
+    dropZone.addEventListener("click", () => csvInput.click());
+    csvInput.addEventListener("change", (e) => handleCsvFiles(e.target.files));
+
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("border-blue-400", "bg-blue-50/30");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("border-blue-400", "bg-blue-50/30");
+    });
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("border-blue-400", "bg-blue-50/30");
+      handleCsvFiles(e.dataTransfer.files);
+    });
+
+    checkSession();
+  </script>
+</body>
+</html>

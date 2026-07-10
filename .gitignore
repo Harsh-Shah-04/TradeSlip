@@ -1,0 +1,75 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+
+# Private business documents / samples (keep out of public GitHub)
+assets/**
+!assets/.gitkeep
+data/samples/**
+!data/samples/.gitkeep
+*.pdf
+preview/
+previews/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.xlsx
+*.xls
+*.csv
+*.doc
+*.docx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Generated slip output (CLI)
+output/
+!output/.gitkeep
+generated_trade_slips/
+
+# IDE / editor
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Archives / temp
+*.tmp
+*.bak
+~$*
+
+# Vercel
+.vercel/
