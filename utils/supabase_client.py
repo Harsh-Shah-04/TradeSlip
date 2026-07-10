@@ -17,21 +17,52 @@ SIGNED_URL_EXPIRES_SECONDS = 600
 DEFAULT_TEMPLATE_STORAGE_PATH = "templates/blank-trade-slip.pdf"
 
 _client: Client | None = None
+_auth_client: Client | None = None
 _cached_template_path: Path | None = None
 
 
+def _supabase_url() -> str:
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError("SUPABASE_URL must be set in the environment.")
+    return url
+
+
 def get_supabase() -> Client:
+    """Service-role client for storage/DB (bypasses RLS)."""
     global _client
     if _client is not None:
         return _client
 
-    url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_KEY", "").strip()
-    if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in the environment.")
+    if not key:
+        raise RuntimeError("SUPABASE_KEY must be set in the environment.")
 
-    _client = create_client(url, key)
+    _client = create_client(_supabase_url(), key)
     return _client
+
+
+def get_auth_supabase() -> Client:
+    """
+    Anon/publishable client for sign-in / session refresh.
+    Password login must not use the service-role key.
+    """
+    global _auth_client
+    if _auth_client is not None:
+        return _auth_client
+
+    anon_key = (
+        os.environ.get("SUPABASE_ANON_KEY", "").strip()
+        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    )
+    if not anon_key:
+        raise RuntimeError(
+            "SUPABASE_ANON_KEY must be set (Supabase → Settings → API → anon/public key). "
+            "Password login cannot use the service-role key."
+        )
+
+    _auth_client = create_client(_supabase_url(), anon_key)
+    return _auth_client
 
 
 def upload_slip(path: str, pdf_bytes: bytes, upsert: bool) -> str:

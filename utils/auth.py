@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -7,7 +8,7 @@ from typing import Any
 
 from fastapi import Response
 
-from utils.supabase_client import get_supabase
+from utils.supabase_client import get_auth_supabase
 
 ACCESS_COOKIE_NAME = "broker_access_token"
 REFRESH_COOKIE_NAME = "broker_refresh_token"
@@ -16,6 +17,7 @@ REFRESH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_ATTEMPTS = 5
 
+logger = logging.getLogger(__name__)
 _failed_logins: dict[str, deque[float]] = defaultdict(deque)
 
 
@@ -44,9 +46,18 @@ def get_allowed_emails() -> set[str]:
 
 def validate_auth_config() -> None:
     url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_KEY", "").strip()
-    if not url or not key:
+    service_key = os.environ.get("SUPABASE_KEY", "").strip()
+    anon_key = (
+        os.environ.get("SUPABASE_ANON_KEY", "").strip()
+        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    )
+    if not url or not service_key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in the environment.")
+    if not anon_key:
+        raise RuntimeError(
+            "SUPABASE_ANON_KEY must be set (Supabase → Project Settings → API → anon public). "
+            "Login uses the anon key; storage uses the service-role key."
+        )
     if not get_allowed_emails():
         raise RuntimeError(
             "ALLOWED_EMAIL must be set to the Supabase Auth user email that may access "
@@ -74,12 +85,13 @@ def _user_email(user: Any) -> str | None:
 
 def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
     """Authenticate against Supabase Auth. Returns access_token, refresh_token, expires_in."""
-    client = get_supabase()
+    client = get_auth_supabase()
     try:
         result = client.auth.sign_in_with_password(
-            {"email": email.strip(), "password": password}
+            {"email": email.strip().lower(), "password": password}
         )
     except Exception as exc:
+        logger.warning("Supabase sign-in failed for %s: %s", email.strip().lower(), exc)
         raise PermissionError("Invalid email or password.") from exc
 
     session = getattr(result, "session", None)
@@ -106,7 +118,7 @@ def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
 def get_user_from_access_token(access_token: str) -> Any | None:
     if not access_token:
         return None
-    client = get_supabase()
+    client = get_auth_supabase()
     try:
         result = client.auth.get_user(access_token)
     except Exception:
@@ -122,7 +134,7 @@ def get_user_from_access_token(access_token: str) -> Any | None:
 def refresh_session_tokens(refresh_token: str) -> tuple[str, str, int] | None:
     if not refresh_token:
         return None
-    client = get_supabase()
+    client = get_auth_supabase()
     try:
         result = client.auth.refresh_session(refresh_token)
     except Exception:
@@ -208,7 +220,7 @@ def clear_auth_cookies(response: Response) -> None:
 def sign_out_supabase(access_token: str | None, refresh_token: str | None) -> None:
     if not access_token and not refresh_token:
         return
-    client = get_supabase()
+    client = get_auth_supabase()
     try:
         if access_token and refresh_token:
             client.auth.set_session(access_token, refresh_token)
