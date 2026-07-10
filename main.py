@@ -143,12 +143,14 @@ def slip_to_json(row: dict) -> dict:
     updated_at = row.get("updated_at")
     if hasattr(updated_at, "isoformat"):
         updated_at = updated_at.isoformat()
+    elif updated_at is not None:
+        updated_at = str(updated_at)
 
     client_code = row.get("client_code", "")
     storage_path = slip_storage_path_from_row(row, trade_date_iso)
 
     return {
-        "id": row.get("id"),
+        "id": str(row.get("id") or ""),
         "client_code": client_code,
         "client_name": row.get("client_name"),
         "trade_date": trade_date_iso,
@@ -332,7 +334,12 @@ async def get_slips(
         )
         return [slip_to_json(row) for row in rows]
 
-    slips = await asyncio.to_thread(_fetch)
+    try:
+        slips = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.exception("Failed to list slips for %s", trade_date_iso)
+        raise HTTPException(status_code=500, detail=f"Failed to load slips: {exc}") from exc
+
     return JSONResponse(content=slips)
 
 

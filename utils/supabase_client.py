@@ -5,8 +5,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from supabase import Client, create_client
+import httpx
 
 from utils.config import DEFAULT_TEMPLATE_PATH
 from utils.pdf_processor import storage_path_for
@@ -15,79 +16,79 @@ BUCKET_NAME = "trade-slips"
 TABLE_NAME = "daily_trade_slips"
 SIGNED_URL_EXPIRES_SECONDS = 600
 DEFAULT_TEMPLATE_STORAGE_PATH = "templates/blank-trade-slip.pdf"
+HTTP_TIMEOUT = 30.0
 
-_client: Client | None = None
-_auth_client: Client | None = None
 _cached_template_path: Path | None = None
 
 
+def _env(name: str, *aliases: str) -> str:
+    for key in (name, *aliases):
+        value = os.environ.get(key, "").strip().strip('"').strip("'")
+        if value:
+            return value
+    return ""
+
+
 def _supabase_url() -> str:
-    url = os.environ.get("SUPABASE_URL", "").strip()
+    url = _env("SUPABASE_URL")
     if not url:
         raise RuntimeError("SUPABASE_URL must be set in the environment.")
-    return url
+    return url.rstrip("/")
 
 
-def get_supabase() -> Client:
-    """Service-role client for storage/DB (bypasses RLS)."""
-    global _client
-    if _client is not None:
-        return _client
-
-    key = os.environ.get("SUPABASE_KEY", "").strip()
+def _service_key() -> str:
+    key = _env("SUPABASE_KEY")
     if not key:
         raise RuntimeError("SUPABASE_KEY must be set in the environment.")
-
-    _client = create_client(_supabase_url(), key)
-    return _client
+    return key
 
 
-def get_auth_supabase() -> Client:
-    """
-    Anon/publishable client for sign-in / session refresh.
-    Password login must not use the service-role key.
-    """
-    global _auth_client
-    if _auth_client is not None:
-        return _auth_client
-
-    anon_key = (
-        os.environ.get("SUPABASE_ANON_KEY", "").strip()
-        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
-    )
-    if not anon_key:
-        raise RuntimeError(
-            "SUPABASE_ANON_KEY must be set (Supabase → Settings → API → anon/public key). "
-            "Password login cannot use the service-role key."
-        )
-
-    _auth_client = create_client(_supabase_url(), anon_key)
-    return _auth_client
+def _service_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    key = _service_key()
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
 
 
 def upload_slip(path: str, pdf_bytes: bytes, upsert: bool) -> str:
-    client = get_supabase()
-    client.storage.from_(BUCKET_NAME).upload(
-        path,
-        pdf_bytes,
-        file_options={
-            "content-type": "application/pdf",
-            "upsert": "true" if upsert else "false",
-        },
+    response = httpx.post(
+        f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{path.lstrip('/')}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/pdf",
+                "x-upsert": "true" if upsert else "false",
+            }
+        ),
+        content=pdf_bytes,
+        timeout=HTTP_TIMEOUT,
     )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"Storage upload failed ({response.status_code}): {response.text[:300]}")
     return path
 
 
 def create_signed_slip_url(storage_path: str, expires_in: int = SIGNED_URL_EXPIRES_SECONDS) -> str:
-    client = get_supabase()
-    result = client.storage.from_(BUCKET_NAME).create_signed_url(
-        storage_path,
-        expires_in,
+    response = httpx.post(
+        f"{_supabase_url()}/storage/v1/object/sign/{BUCKET_NAME}/{storage_path.lstrip('/')}",
+        headers=_service_headers({"Content-Type": "application/json"}),
+        json={"expiresIn": expires_in},
+        timeout=HTTP_TIMEOUT,
     )
-    signed_url = result.get("signedURL") or result.get("signedUrl") or ""
-    if not signed_url:
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Signed URL failed ({response.status_code}): {response.text[:300]}"
+        )
+    payload = response.json()
+    signed_path = payload.get("signedURL") or payload.get("signedUrl") or ""
+    if not signed_path:
         raise RuntimeError(f"Supabase did not return a signed URL for {storage_path!r}.")
-    return signed_url
+    if signed_path.startswith("http"):
+        return signed_path
+    return f"{_supabase_url()}/storage/v1{signed_path}"
 
 
 def upsert_slip_row(
@@ -97,7 +98,6 @@ def upsert_slip_row(
     public_url: str,
     status: str = "Unsigned",
 ) -> dict[str, Any]:
-    client = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
     row = {
         "client_code": client_code,
@@ -107,47 +107,57 @@ def upsert_slip_row(
         "public_url": public_url,
         "updated_at": now,
     }
-    response = (
-        client.table(TABLE_NAME)
-        .upsert(row, on_conflict="client_code,trade_date")
-        .execute()
+    response = httpx.post(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            }
+        ),
+        params={"on_conflict": "client_code,trade_date"},
+        json=row,
+        timeout=HTTP_TIMEOUT,
     )
-    if response.data:
-        return response.data[0]
-    fetch = (
-        client.table(TABLE_NAME)
-        .select("*")
-        .eq("client_code", client_code)
-        .eq("trade_date", trade_date_iso)
-        .limit(1)
-        .execute()
-    )
-    if fetch.data:
-        return fetch.data[0]
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"Upsert failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        return data[0]
+    if isinstance(data, dict) and data:
+        return data
     return row
 
 
 def mark_signed(client_code: str, trade_date_iso: str, public_url: str) -> dict[str, Any]:
-    client = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
-    response = (
-        client.table(TABLE_NAME)
-        .update(
+    response = httpx.patch(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(
             {
-                "status": "Signed",
-                "public_url": public_url,
-                "updated_at": now,
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
             }
-        )
-        .eq("client_code", client_code)
-        .eq("trade_date", trade_date_iso)
-        .execute()
+        ),
+        params={
+            "client_code": f"eq.{client_code}",
+            "trade_date": f"eq.{trade_date_iso}",
+        },
+        json={
+            "status": "Signed",
+            "public_url": public_url,
+            "updated_at": now,
+        },
+        timeout=HTTP_TIMEOUT,
     )
-    if not response.data:
-        raise LookupError(
-            f"No slip record for client {client_code!r} on trade date {trade_date_iso}."
-        )
-    return response.data[0]
+    if response.status_code not in (200, 204):
+        raise RuntimeError(f"Mark signed failed ({response.status_code}): {response.text[:300]}")
+    data = response.json() if response.content else []
+    if isinstance(data, list) and data:
+        return data[0]
+    raise LookupError(
+        f"No slip record for client {client_code!r} on trade date {trade_date_iso}."
+    )
 
 
 def list_slips(
@@ -155,14 +165,26 @@ def list_slips(
     status: str | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
-    client = get_supabase()
-    query = client.table(TABLE_NAME).select("*").eq("trade_date", trade_date_iso)
+    params: dict[str, str] = {
+        "select": "*",
+        "trade_date": f"eq.{trade_date_iso}",
+        "order": "client_code",
+    }
     if status:
-        query = query.eq("status", status)
-    if search:
-        query = query.ilike("client_code", f"%{search.strip()}%")
-    response = query.order("client_code").execute()
-    return response.data or []
+        params["status"] = f"eq.{status}"
+    if search and search.strip():
+        params["client_code"] = f"ilike.*{search.strip()}*"
+
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(),
+        params=params,
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"List slips failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    return data if isinstance(data, list) else []
 
 
 def resolve_storage_path(client_code: str, trade_date_iso: str) -> str:
@@ -170,8 +192,17 @@ def resolve_storage_path(client_code: str, trade_date_iso: str) -> str:
 
 
 def download_slip_bytes(storage_path: str) -> bytes:
-    client = get_supabase()
-    return client.storage.from_(BUCKET_NAME).download(storage_path)
+    encoded = "/".join(quote(part, safe="") for part in storage_path.lstrip("/").split("/"))
+    response = httpx.get(
+        f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{encoded}",
+        headers=_service_headers(),
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Download failed ({response.status_code}) for {storage_path!r}: {response.text[:300]}"
+        )
+    return response.content
 
 
 def resolve_blank_template_path(preferred: Path | None = None) -> Path:
@@ -184,7 +215,7 @@ def resolve_blank_template_path(preferred: Path | None = None) -> Path:
     if preferred is not None and preferred.exists():
         return preferred
 
-    env_local = os.environ.get("TEMPLATE_PATH", "").strip()
+    env_local = _env("TEMPLATE_PATH")
     if env_local:
         local_path = Path(env_local)
         if not local_path.is_absolute():
@@ -198,10 +229,7 @@ def resolve_blank_template_path(preferred: Path | None = None) -> Path:
     if _cached_template_path is not None and _cached_template_path.exists():
         return _cached_template_path
 
-    storage_path = (
-        os.environ.get("TEMPLATE_STORAGE_PATH", DEFAULT_TEMPLATE_STORAGE_PATH).strip()
-        or DEFAULT_TEMPLATE_STORAGE_PATH
-    )
+    storage_path = _env("TEMPLATE_STORAGE_PATH") or DEFAULT_TEMPLATE_STORAGE_PATH
     pdf_bytes = download_slip_bytes(storage_path)
 
     cache_dir = Path(tempfile.gettempdir()) / "tradeslip_templates"
