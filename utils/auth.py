@@ -85,13 +85,28 @@ def _user_email(user: Any) -> str | None:
 
 def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
     """Authenticate against Supabase Auth. Returns access_token, refresh_token, expires_in."""
+    from gotrue.errors import AuthApiError
+
     client = get_auth_supabase()
+    normalized_email = email.strip().lower()
     try:
         result = client.auth.sign_in_with_password(
-            {"email": email.strip().lower(), "password": password}
+            {"email": normalized_email, "password": password}
         )
+    except AuthApiError as exc:
+        message = (getattr(exc, "message", None) or str(exc) or "").strip()
+        logger.warning("Supabase AuthApiError for %s: %s", normalized_email, message)
+        lowered = message.lower()
+        if "confirm" in lowered or "not confirmed" in lowered:
+            raise PermissionError(
+                "Email is not confirmed in Supabase. Turn off Confirm email "
+                "(Authentication → Providers → Email) or confirm this user, then try again."
+            ) from exc
+        if message:
+            raise PermissionError(message) from exc
+        raise PermissionError("Invalid email or password.") from exc
     except Exception as exc:
-        logger.warning("Supabase sign-in failed for %s: %s", email.strip().lower(), exc)
+        logger.warning("Supabase sign-in failed for %s: %s", normalized_email, exc)
         raise PermissionError("Invalid email or password.") from exc
 
     session = getattr(result, "session", None)
@@ -105,7 +120,9 @@ def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
             client.auth.sign_out()
         except Exception:
             pass
-        raise PermissionError("This account is not allowed to access the dashboard.")
+        raise PermissionError(
+            f"Signed in as {email_value!r}, but ALLOWED_EMAIL does not include this address."
+        )
 
     access_token = getattr(session, "access_token", None) or ""
     refresh_token = getattr(session, "refresh_token", None) or ""
