@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Admin · Brokers{% endblock %}
+{% block content %}
+<header class="mb-8">
+  <h1 class="text-3xl font-bold text-slate-900">Broker users</h1>
+  <p class="text-slate-600 mt-1">Invite friend brokers. Each person only sees their own slips.</p>
+</header>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+  <h2 class="text-lg font-semibold mb-4">Invite broker</h2>
+  <form id="inviteForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label for="inviteEmail" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+      <input type="email" id="inviteEmail" required class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+    </div>
+    <div>
+      <label for="inviteName" class="block text-sm font-medium text-slate-700 mb-1">Display name</label>
+      <input type="text" id="inviteName" maxlength="120" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+    </div>
+    <div>
+      <label for="invitePassword" class="block text-sm font-medium text-slate-700 mb-1">Temporary password</label>
+      <input type="text" id="invitePassword" minlength="8" required autocomplete="off" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      <p class="text-xs text-slate-500 mt-1">Share this password securely. They can change it on the Account page.</p>
+    </div>
+    <div>
+      <label for="inviteRole" class="block text-sm font-medium text-slate-700 mb-1">Role</label>
+      <select id="inviteRole" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="broker">Broker</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <div class="md:col-span-2 flex items-center gap-3">
+      <button type="submit" id="inviteBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Invite</button>
+      <p id="inviteStatus" class="hidden text-sm"></p>
+    </div>
+  </form>
+</section>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+  <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+    <h2 class="text-lg font-semibold">All brokers</h2>
+    <p id="brokersStatus" class="text-sm text-slate-500"></p>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="px-4 py-3">Name</th>
+          <th class="px-4 py-3">Email</th>
+          <th class="px-4 py-3">Role</th>
+          <th class="px-4 py-3">Status</th>
+          <th class="px-4 py-3">Created</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="brokersBody" class="divide-y divide-slate-100">
+        <tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const brokersBody = document.getElementById("brokersBody");
+  const brokersStatus = document.getElementById("brokersStatus");
+  const inviteStatus = document.getElementById("inviteStatus");
+
+  function showInvite(message, ok) {
+    inviteStatus.textContent = message;
+    inviteStatus.classList.remove("hidden", "text-red-600", "text-green-600");
+    inviteStatus.classList.add(ok ? "text-green-600" : "text-red-600");
+  }
+
+  async function loadBrokers() {
+    brokersStatus.textContent = "Loading…";
+    try {
+      const response = await TradeSlip.apiFetch("/api/admin/brokers");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      const brokers = payload.brokers || [];
+      brokersStatus.textContent = `${brokers.length} broker${brokers.length === 1 ? "" : "s"}`;
+      if (brokers.length === 0) {
+        brokersBody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">No brokers yet.</td></tr>';
+        return;
+      }
+      brokersBody.innerHTML = brokers.map((b) => {
+        const id = TradeSlip.escapeHtml(b.id);
+        const active = b.is_active;
+        const created = b.created_at ? TradeSlip.escapeHtml(String(b.created_at).replace("T", " ").slice(0, 19)) : "—";
+        return `
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 font-medium">${TradeSlip.escapeHtml(b.display_name)}</td>
+            <td class="px-4 py-3">${TradeSlip.escapeHtml(b.email)}</td>
+            <td class="px-4 py-3 capitalize">${TradeSlip.escapeHtml(b.role)}</td>
+            <td class="px-4 py-3">${active ? '<span class="text-green-700">Active</span>' : '<span class="text-red-600">Inactive</span>'}</td>
+            <td class="px-4 py-3 text-slate-500">${created}</td>
+            <td class="px-4 py-3 text-right">
+              <button type="button" class="toggle-active-btn rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50"
+                data-id="${id}" data-activate="${active ? "false" : "true"}">
+                ${active ? "Deactivate" : "Reactivate"}
+              </button>
+            </td>
+          </tr>`;
+      }).join("");
+
+      brokersBody.querySelectorAll(".toggle-active-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const activate = btn.dataset.activate === "true";
+          const label = activate ? "reactivate" : "deactivate";
+          if (!confirm(`${label} this broker?`)) return;
+          TradeSlip.showProgress(activate ? "Reactivating…" : "Deactivating…", "Updating broker account.");
+          try {
+            const response = await TradeSlip.apiFetch(
+              `/api/admin/brokers/${encodeURIComponent(btn.dataset.id)}/deactivate?activate=${activate}`,
+              { method: "PATCH" }
+            );
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+            await loadBrokers();
+          } catch (error) {
+            alert(error.message);
+          } finally {
+            TradeSlip.hideProgress();
+          }
+        });
+      });
+    } catch (error) {
+      brokersBody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-red-600">${TradeSlip.escapeHtml(error.message)}</td></tr>`;
+      brokersStatus.textContent = "";
+    }
+  }
+
+  document.getElementById("inviteForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = document.getElementById("inviteBtn");
+    btn.disabled = true;
+    TradeSlip.showProgress("Inviting…", "Creating broker account.");
+    try {
+      const response = await TradeSlip.apiFetch("/api/admin/brokers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: document.getElementById("inviteEmail").value.trim(),
+          display_name: document.getElementById("inviteName").value.trim(),
+          password: document.getElementById("invitePassword").value,
+          role: document.getElementById("inviteRole").value,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      showInvite(`Invited ${payload.email}.`, true);
+      document.getElementById("inviteForm").reset();
+      await loadBrokers();
+    } catch (error) {
+      showInvite(error.message, false);
+    } finally {
+      TradeSlip.hideProgress();
+      btn.disabled = false;
+    }
+  });
+
+  loadBrokers();
+</script>
+{% endblock %}

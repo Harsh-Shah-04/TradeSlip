@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}History · Trade Slip{% endblock %}
+{% block content %}
+<header class="mb-8">
+  <h1 class="text-3xl font-bold text-slate-900">Trade day history</h1>
+  <p class="text-slate-600 mt-1">See what was added each day, what is still unsigned, and download ZIPs for one or more days.</p>
+</header>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+    <div>
+      <label for="historyFrom" class="block text-sm font-medium text-slate-700 mb-1">From</label>
+      <input type="date" id="historyFrom" class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+    </div>
+    <div>
+      <label for="historyTo" class="block text-sm font-medium text-slate-700 mb-1">To</label>
+      <input type="date" id="historyTo" class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+    </div>
+    <div class="flex items-center gap-2 pb-2">
+      <input type="checkbox" id="unsignedOnly" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+      <label for="unsignedOnly" class="text-sm font-medium text-slate-700">Has unsigned only</label>
+    </div>
+    <div>
+      <button type="button" id="historyRefreshBtn" class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Apply filters</button>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+  <div class="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <h2 class="text-lg font-semibold">Days</h2>
+      <span id="historyCount" class="text-sm text-slate-500">0 days</span>
+    </div>
+    <p id="historyStatus" class="text-sm text-slate-500 hidden"></p>
+  </div>
+
+  <div id="historyBulkBar" class="hidden px-6 py-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <p class="text-sm font-medium text-slate-700"><span id="historySelectedCount">0</span> day(s) selected</p>
+    <div class="flex items-center gap-2">
+      <button type="button" id="historyClearBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Clear</button>
+      <button type="button" id="historyBulkZipBtn" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">Download selected ZIPs</button>
+    </div>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="px-4 py-3 w-12">
+            <input type="checkbox" id="selectAllDays" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" aria-label="Select all days" />
+          </th>
+          <th class="px-4 py-3">Trade date</th>
+          <th class="px-4 py-3">Total</th>
+          <th class="px-4 py-3">Unsigned</th>
+          <th class="px-4 py-3">Signed</th>
+          <th class="px-4 py-3">Last updated</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody" class="divide-y divide-slate-100">
+        <tr><td colspan="7" class="px-6 py-8 text-center text-slate-500">Loading history…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const historyFrom = document.getElementById("historyFrom");
+  const historyTo = document.getElementById("historyTo");
+  const unsignedOnly = document.getElementById("unsignedOnly");
+  const historyRefreshBtn = document.getElementById("historyRefreshBtn");
+  const historyBody = document.getElementById("historyBody");
+  const historyCount = document.getElementById("historyCount");
+  const historyStatus = document.getElementById("historyStatus");
+  const selectAllDays = document.getElementById("selectAllDays");
+  const historyBulkBar = document.getElementById("historyBulkBar");
+  const historySelectedCount = document.getElementById("historySelectedCount");
+  const historyClearBtn = document.getElementById("historyClearBtn");
+  const historyBulkZipBtn = document.getElementById("historyBulkZipBtn");
+
+  let days = [];
+  const selectedDates = new Set();
+
+  function setStatus(message, tone) {
+    if (!message) {
+      historyStatus.classList.add("hidden");
+      historyStatus.textContent = "";
+      return;
+    }
+    historyStatus.textContent = message;
+    historyStatus.classList.remove("hidden", "text-slate-500", "text-green-600", "text-red-600", "text-blue-600");
+    historyStatus.classList.add(
+      tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : tone === "info" ? "text-blue-600" : "text-slate-500"
+    );
+  }
+
+  function updateBulkBar() {
+    const count = selectedDates.size;
+    historySelectedCount.textContent = String(count);
+    historyBulkBar.classList.toggle("hidden", count === 0);
+    selectAllDays.checked = days.length > 0 && days.every((d) => selectedDates.has(d.trade_date));
+    selectAllDays.indeterminate = count > 0 && !selectAllDays.checked;
+  }
+
+  function renderDays() {
+    historyCount.textContent = `${days.length} day${days.length === 1 ? "" : "s"}`;
+    if (days.length === 0) {
+      historyBody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-slate-500">No trade days yet. Upload a CSV from the Dashboard.</td></tr>';
+      updateBulkBar();
+      return;
+    }
+    historyBody.innerHTML = days.map((day) => {
+      const date = TradeSlip.escapeHtml(day.trade_date);
+      const checked = selectedDates.has(day.trade_date) ? "checked" : "";
+      const last = day.last_updated ? TradeSlip.escapeHtml(String(day.last_updated).replace("T", " ").slice(0, 19)) : "—";
+      return `
+        <tr class="hover:bg-slate-50" data-date="${date}">
+          <td class="px-4 py-3">
+            <input type="checkbox" class="day-checkbox h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" data-date="${date}" ${checked} />
+          </td>
+          <td class="px-4 py-3 font-medium text-slate-900">${date}</td>
+          <td class="px-4 py-3">${day.total}</td>
+          <td class="px-4 py-3 ${day.unsigned > 0 ? "text-amber-700 font-medium" : ""}">${day.unsigned}</td>
+          <td class="px-4 py-3 ${day.signed > 0 ? "text-green-700" : ""}">${day.signed}</td>
+          <td class="px-4 py-3 text-slate-500">${last}</td>
+          <td class="px-4 py-3 text-right">
+            <div class="inline-flex items-center gap-2">
+              <a href="/dashboard?date=${encodeURIComponent(day.trade_date)}" class="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Open</a>
+              <button type="button" class="day-zip-btn rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700" data-date="${date}">ZIP</button>
+            </div>
+          </td>
+        </tr>`;
+    }).join("");
+
+    historyBody.querySelectorAll(".day-checkbox").forEach((box) => {
+      box.addEventListener("change", () => {
+        const date = box.dataset.date;
+        if (box.checked) selectedDates.add(date);
+        else selectedDates.delete(date);
+        updateBulkBar();
+      });
+    });
+    historyBody.querySelectorAll(".day-zip-btn").forEach((btn) => {
+      btn.addEventListener("click", () => downloadSingleZip(btn.dataset.date));
+    });
+    updateBulkBar();
+  }
+
+  async function loadHistory() {
+    setStatus("Loading…", "info");
+    const params = new URLSearchParams();
+    if (historyFrom.value) params.set("from", historyFrom.value);
+    if (historyTo.value) params.set("to", historyTo.value);
+    if (unsignedOnly.checked) params.set("unsigned_only", "true");
+    try {
+      const response = await TradeSlip.apiFetch(`/api/history/days?${params.toString()}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      days = payload.days || [];
+      selectedDates.clear();
+      renderDays();
+      setStatus("", null);
+    } catch (error) {
+      historyBody.innerHTML = `<tr><td colspan="7" class="px-6 py-8 text-center text-red-600">${TradeSlip.escapeHtml(error.message)}</td></tr>`;
+      setStatus(error.message, "error");
+    }
+  }
+
+  function downloadSingleZip(date) {
+    TradeSlip.showProgress("Preparing ZIP…", `Building archive for ${date}.`);
+    // Navigation download — briefly show progress then navigate
+    window.location.href = `/api/download-zip/${encodeURIComponent(date)}`;
+    setTimeout(() => TradeSlip.hideProgress(), 1500);
+  }
+
+  async function downloadBulkZip() {
+    if (selectedDates.size === 0) return;
+    const dates = [...selectedDates].sort();
+    TradeSlip.showProgress("Preparing ZIP…", `Building archive for ${dates.length} day(s).`);
+    try {
+      const response = await TradeSlip.apiFetch("/api/download-zip/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dates }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(TradeSlip.parseErrorDetail(payload));
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `TradeSlips_bulk_${dates.length}_days.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(`Downloaded ZIP for ${dates.length} day(s).`, "success");
+    } catch (error) {
+      setStatus(error.message, "error");
+    } finally {
+      TradeSlip.hideProgress();
+    }
+  }
+
+  selectAllDays.addEventListener("change", () => {
+    if (selectAllDays.checked) days.forEach((d) => selectedDates.add(d.trade_date));
+    else selectedDates.clear();
+    renderDays();
+  });
+  historyClearBtn.addEventListener("click", () => {
+    selectedDates.clear();
+    renderDays();
+  });
+  historyBulkZipBtn.addEventListener("click", downloadBulkZip);
+  historyRefreshBtn.addEventListener("click", loadHistory);
+  unsignedOnly.addEventListener("change", loadHistory);
+  historyFrom.addEventListener("change", loadHistory);
+  historyTo.addEventListener("change", loadHistory);
+
+  loadHistory();
+</script>
+{% endblock %}

@@ -14,6 +14,7 @@ from utils.pdf_processor import storage_path_for
 
 BUCKET_NAME = "trade-slips"
 TABLE_NAME = "daily_trade_slips"
+BROKERS_TABLE = "brokers"
 SIGNED_URL_EXPIRES_SECONDS = 600
 DEFAULT_TEMPLATE_STORAGE_PATH = "templates/blank-trade-slip.pdf"
 HTTP_TIMEOUT = 30.0
@@ -92,6 +93,7 @@ def create_signed_slip_url(storage_path: str, expires_in: int = SIGNED_URL_EXPIR
 
 
 def upsert_slip_row(
+    broker_id: str,
     client_code: str,
     client_name: str,
     trade_date_iso: str,
@@ -100,6 +102,7 @@ def upsert_slip_row(
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     row = {
+        "broker_id": broker_id,
         "client_code": client_code,
         "client_name": client_name,
         "trade_date": trade_date_iso,
@@ -115,7 +118,7 @@ def upsert_slip_row(
                 "Prefer": "resolution=merge-duplicates,return=representation",
             }
         ),
-        params={"on_conflict": "client_code,trade_date"},
+        params={"on_conflict": "broker_id,client_code,trade_date"},
         json=row,
         timeout=HTTP_TIMEOUT,
     )
@@ -129,7 +132,12 @@ def upsert_slip_row(
     return row
 
 
-def mark_signed(client_code: str, trade_date_iso: str, public_url: str) -> dict[str, Any]:
+def mark_signed(
+    broker_id: str,
+    client_code: str,
+    trade_date_iso: str,
+    public_url: str,
+) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     response = httpx.patch(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
@@ -140,6 +148,7 @@ def mark_signed(client_code: str, trade_date_iso: str, public_url: str) -> dict[
             }
         ),
         params={
+            "broker_id": f"eq.{broker_id}",
             "client_code": f"eq.{client_code}",
             "trade_date": f"eq.{trade_date_iso}",
         },
@@ -161,12 +170,14 @@ def mark_signed(client_code: str, trade_date_iso: str, public_url: str) -> dict[
 
 
 def list_slips(
+    broker_id: str,
     trade_date_iso: str,
     status: str | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
     params: dict[str, str] = {
         "select": "*",
+        "broker_id": f"eq.{broker_id}",
         "trade_date": f"eq.{trade_date_iso}",
         "order": "client_code",
     }
@@ -187,12 +198,13 @@ def list_slips(
     return data if isinstance(data, list) else []
 
 
-def get_slip_row(client_code: str, trade_date_iso: str) -> dict[str, Any]:
+def get_slip_row(broker_id: str, client_code: str, trade_date_iso: str) -> dict[str, Any]:
     response = httpx.get(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(),
         params={
             "select": "*",
+            "broker_id": f"eq.{broker_id}",
             "client_code": f"eq.{client_code}",
             "trade_date": f"eq.{trade_date_iso}",
             "limit": "1",
@@ -210,6 +222,7 @@ def get_slip_row(client_code: str, trade_date_iso: str) -> dict[str, Any]:
 
 
 def update_slip_row(
+    broker_id: str,
     client_code: str,
     trade_date_iso: str,
     *,
@@ -234,6 +247,7 @@ def update_slip_row(
             }
         ),
         params={
+            "broker_id": f"eq.{broker_id}",
             "client_code": f"eq.{client_code}",
             "trade_date": f"eq.{trade_date_iso}",
         },
@@ -250,11 +264,12 @@ def update_slip_row(
     )
 
 
-def delete_slip_row(client_code: str, trade_date_iso: str) -> None:
+def delete_slip_row(broker_id: str, client_code: str, trade_date_iso: str) -> None:
     response = httpx.delete(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={
+            "broker_id": f"eq.{broker_id}",
             "client_code": f"eq.{client_code}",
             "trade_date": f"eq.{trade_date_iso}",
         },
@@ -274,7 +289,6 @@ def delete_storage_object(storage_path: str) -> None:
     )
     if response.status_code in (200, 204, 404):
         return
-    # Some Storage setups prefer the remove endpoint
     remove = httpx.post(
         f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/remove",
         headers=_service_headers({"Content-Type": "application/json"}),
@@ -288,8 +302,8 @@ def delete_storage_object(storage_path: str) -> None:
         )
 
 
-def resolve_storage_path(client_code: str, trade_date_iso: str) -> str:
-    return storage_path_for(client_code, trade_date_iso)
+def resolve_storage_path(client_code: str, trade_date_iso: str, broker_id: str) -> str:
+    return storage_path_for(client_code, trade_date_iso, broker_id=broker_id)
 
 
 def download_slip_bytes(storage_path: str) -> bytes:
@@ -307,10 +321,6 @@ def download_slip_bytes(storage_path: str) -> bytes:
 
 
 def resolve_blank_template_path(preferred: Path | None = None) -> Path:
-    """
-    Prefer a local template file (gitignored). If missing, download from the
-    private Supabase bucket so production never needs the PDF in GitHub.
-    """
     global _cached_template_path
 
     if preferred is not None and preferred.exists():
@@ -339,3 +349,286 @@ def resolve_blank_template_path(preferred: Path | None = None) -> Path:
     cache_path.write_bytes(pdf_bytes)
     _cached_template_path = cache_path
     return cache_path
+
+
+# ---------------------------------------------------------------------------
+# Brokers
+# ---------------------------------------------------------------------------
+
+
+def get_broker_by_id(broker_id: str) -> dict[str, Any] | None:
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(),
+        params={"select": "*", "id": f"eq.{broker_id}", "limit": "1"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Fetch broker failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        return data[0]
+    return None
+
+
+def get_broker_by_email(email: str) -> dict[str, Any] | None:
+    normalized = email.strip().lower()
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(),
+        params={"select": "*", "email": f"eq.{normalized}", "limit": "1"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Fetch broker failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        return data[0]
+    return None
+
+
+def list_brokers() -> list[dict[str, Any]]:
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(),
+        params={"select": "*", "order": "created_at.asc"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"List brokers failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    return data if isinstance(data, list) else []
+
+
+def upsert_broker_row(
+    broker_id: str,
+    email: str,
+    display_name: str,
+    role: str = "broker",
+    is_active: bool = True,
+) -> dict[str, Any]:
+    row = {
+        "id": broker_id,
+        "email": email.strip().lower(),
+        "display_name": display_name.strip() or email.split("@")[0],
+        "role": role,
+        "is_active": is_active,
+    }
+    response = httpx.post(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            }
+        ),
+        params={"on_conflict": "id"},
+        json=row,
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"Upsert broker failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        return data[0]
+    if isinstance(data, dict) and data:
+        return data
+    return row
+
+
+def set_broker_active(broker_id: str, is_active: bool) -> dict[str, Any]:
+    response = httpx.patch(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+        ),
+        params={"id": f"eq.{broker_id}"},
+        json={"is_active": is_active},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Update broker failed ({response.status_code}): {response.text[:300]}"
+        )
+    data = response.json() if response.content else []
+    if isinstance(data, list) and data:
+        return data[0]
+    raise LookupError(f"No broker with id {broker_id!r}.")
+
+
+def update_broker_profile(broker_id: str, display_name: str) -> dict[str, Any]:
+    response = httpx.patch(
+        f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+        ),
+        params={"id": f"eq.{broker_id}"},
+        json={"display_name": display_name.strip()},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Update broker profile failed ({response.status_code}): {response.text[:300]}"
+        )
+    data = response.json() if response.content else []
+    if isinstance(data, list) and data:
+        return data[0]
+    raise LookupError(f"No broker with id {broker_id!r}.")
+
+
+def create_auth_user(email: str, password: str, display_name: str) -> dict[str, Any]:
+    """Create a Supabase Auth user via the Admin API (service role)."""
+    response = httpx.post(
+        f"{_supabase_url()}/auth/v1/admin/users",
+        headers=_service_headers({"Content-Type": "application/json"}),
+        json={
+            "email": email.strip().lower(),
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {"display_name": display_name},
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 201):
+        payload: dict[str, Any] = {}
+        try:
+            payload = response.json()
+        except Exception:
+            pass
+        message = str(
+            payload.get("msg")
+            or payload.get("message")
+            or payload.get("error_description")
+            or payload.get("error")
+            or response.text[:300]
+        )
+        raise RuntimeError(f"Create auth user failed: {message}")
+    data = response.json()
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("Supabase Admin API did not return a user id.")
+    return data
+
+
+def change_user_password(access_token: str, new_password: str) -> None:
+    anon = _env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY")
+    response = httpx.put(
+        f"{_supabase_url()}/auth/v1/user",
+        headers={
+            "apikey": anon,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        json={"password": new_password},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        payload: dict[str, Any] = {}
+        try:
+            payload = response.json()
+        except Exception:
+            pass
+        message = str(
+            payload.get("msg")
+            or payload.get("message")
+            or payload.get("error_description")
+            or "Could not change password."
+        )
+        raise RuntimeError(message)
+
+
+def broker_owns_storage_path(broker_id: str, storage_path: str) -> bool:
+    cleaned = storage_path.strip().lstrip("/")
+    if cleaned.startswith(f"{broker_id}/"):
+        return True
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(),
+        params={
+            "select": "id",
+            "broker_id": f"eq.{broker_id}",
+            "public_url": f"eq.{cleaned}",
+            "limit": "1",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        return False
+    data = response.json()
+    return isinstance(data, list) and bool(data)
+
+
+def list_history_days(
+    broker_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    unsigned_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Return per-day summaries for a broker by aggregating slip rows."""
+    params: dict[str, str] = {
+        "select": "trade_date,status,updated_at",
+        "broker_id": f"eq.{broker_id}",
+        "order": "trade_date.desc",
+        "limit": "10000",
+    }
+    if date_from:
+        params["trade_date"] = f"gte.{date_from}"
+    if date_to:
+        # PostgREST: combine filters with and=(...)
+        if date_from:
+            params["and"] = f"(trade_date.gte.{date_from},trade_date.lte.{date_to})"
+            params.pop("trade_date", None)
+        else:
+            params["trade_date"] = f"lte.{date_to}"
+
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
+        headers=_service_headers(),
+        params=params,
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"History query failed ({response.status_code}): {response.text[:300]}")
+    rows = response.json()
+    if not isinstance(rows, list):
+        rows = []
+
+    by_date: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        trade_date = row.get("trade_date")
+        if hasattr(trade_date, "isoformat"):
+            key = trade_date.isoformat()
+        else:
+            key = str(trade_date)
+        bucket = by_date.setdefault(
+            key,
+            {
+                "trade_date": key,
+                "total": 0,
+                "unsigned": 0,
+                "signed": 0,
+                "last_updated": None,
+            },
+        )
+        bucket["total"] += 1
+        if row.get("status") == "Signed":
+            bucket["signed"] += 1
+        else:
+            bucket["unsigned"] += 1
+        updated = row.get("updated_at")
+        if hasattr(updated, "isoformat"):
+            updated = updated.isoformat()
+        elif updated is not None:
+            updated = str(updated)
+        if updated and (bucket["last_updated"] is None or updated > bucket["last_updated"]):
+            bucket["last_updated"] = updated
+
+    days = sorted(by_date.values(), key=lambda d: d["trade_date"], reverse=True)
+    if unsigned_only:
+        days = [d for d in days if d["unsigned"] > 0]
+    return days

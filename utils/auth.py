@@ -4,10 +4,13 @@ import logging
 import os
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from fastapi import Response
+
+from utils.supabase_client import get_broker_by_id, upsert_broker_row
 
 ACCESS_COOKIE_NAME = "broker_access_token"
 REFRESH_COOKIE_NAME = "broker_refresh_token"
@@ -18,6 +21,28 @@ HTTP_TIMEOUT = 20.0
 
 logger = logging.getLogger(__name__)
 _failed_logins: dict[str, deque[float]] = defaultdict(deque)
+
+
+@dataclass(frozen=True)
+class BrokerSession:
+    id: str
+    email: str
+    display_name: str
+    role: str
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "authenticated": True,
+            "broker_id": self.id,
+            "email": self.email,
+            "display_name": self.display_name,
+            "role": self.role,
+            "is_admin": self.is_admin,
+        }
 
 
 def _env(name: str, *aliases: str) -> str:
@@ -44,11 +69,12 @@ def cookie_secure_enabled() -> bool:
     return _is_production()
 
 
-def get_allowed_emails() -> set[str]:
-    raw = _env("ALLOWED_EMAIL", "ALLOWED_EMAILS")
+def get_bootstrap_admin_email() -> str | None:
+    """First admin auto-provision email (also accepts legacy ALLOWED_EMAIL)."""
+    raw = _env("ADMIN_BOOTSTRAP_EMAIL", "ALLOWED_EMAIL", "ALLOWED_EMAILS")
     if not raw:
-        return set()
-    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+        return None
+    return raw.split(",")[0].strip().lower() or None
 
 
 def _supabase_url() -> str:
@@ -69,17 +95,6 @@ def validate_auth_config() -> None:
         raise RuntimeError(
             "SUPABASE_ANON_KEY must be set (Supabase → Project Settings → API → anon public)."
         )
-    if not get_allowed_emails():
-        raise RuntimeError(
-            "ALLOWED_EMAIL must be set to the Supabase Auth user email that may access "
-            "this dashboard."
-        )
-
-
-def is_email_allowed(email: str | None) -> bool:
-    if not email:
-        return False
-    return email.strip().lower() in get_allowed_emails()
 
 
 def _auth_headers(bearer: str | None = None) -> dict[str, str]:
@@ -92,7 +107,62 @@ def _auth_headers(bearer: str | None = None) -> dict[str, str]:
     }
 
 
-def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
+def _broker_session_from_row(row: dict[str, Any]) -> BrokerSession | None:
+    if not row.get("is_active", True):
+        return None
+    broker_id = str(row.get("id") or "")
+    email = str(row.get("email") or "").strip().lower()
+    if not broker_id or not email:
+        return None
+    role = str(row.get("role") or "broker")
+    if role not in ("admin", "broker"):
+        role = "broker"
+    display_name = str(row.get("display_name") or email.split("@")[0])
+    return BrokerSession(
+        id=broker_id,
+        email=email,
+        display_name=display_name,
+        role=role,
+    )
+
+
+def resolve_broker_for_auth_user(user: dict[str, Any]) -> BrokerSession:
+    """Map a Supabase Auth user to an active brokers row (bootstrap admin if needed)."""
+    user_id = str(user.get("id") or "")
+    email = str(user.get("email") or "").strip().lower()
+    if not user_id or not email:
+        raise PermissionError("Invalid authenticated user.")
+
+    row = get_broker_by_id(user_id)
+    if row is not None:
+        session = _broker_session_from_row(row)
+        if session is None:
+            raise PermissionError("This broker account has been deactivated. Contact the admin.")
+        return session
+
+    bootstrap = get_bootstrap_admin_email()
+    if bootstrap and email == bootstrap:
+        meta = user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {}
+        display_name = str(meta.get("display_name") or email.split("@")[0])
+        created = upsert_broker_row(
+            broker_id=user_id,
+            email=email,
+            display_name=display_name,
+            role="admin",
+            is_active=True,
+        )
+        session = _broker_session_from_row(created)
+        if session is None:
+            raise PermissionError("Could not bootstrap admin broker account.")
+        logger.info("Bootstrapped admin broker for %s", email)
+        return session
+
+    raise PermissionError(
+        "This account is not registered as a broker. Ask the admin to invite you."
+    )
+
+
+def sign_in_with_password(email: str, password: str) -> tuple[str, str, int, BrokerSession]:
     """Authenticate against Supabase Auth via HTTP (reliable on Vercel)."""
     normalized_email = email.strip().lower()
     url = f"{_supabase_url()}/auth/v1/token?grant_type=password"
@@ -137,17 +207,15 @@ def sign_in_with_password(email: str, password: str) -> tuple[str, str, int]:
     refresh_token = str(data.get("refresh_token") or "")
     expires_in = int(data.get("expires_in") or 3600)
     user = data.get("user") or {}
-    email_value = str(user.get("email") or normalized_email)
 
     if not access_token or not refresh_token:
         raise PermissionError("Supabase did not return a valid session.")
 
-    if not is_email_allowed(email_value):
-        raise PermissionError(
-            f"Signed in as {email_value!r}, but ALLOWED_EMAIL does not include this address."
-        )
+    if not isinstance(user, dict):
+        raise PermissionError("Supabase did not return a user.")
 
-    return access_token, refresh_token, expires_in
+    broker = resolve_broker_for_auth_user(user)
+    return access_token, refresh_token, expires_in, broker
 
 
 def get_user_from_access_token(access_token: str) -> dict[str, Any] | None:
@@ -164,9 +232,6 @@ def get_user_from_access_token(access_token: str) -> dict[str, Any] | None:
     if response.status_code != 200:
         return None
     user = response.json()
-    email = user.get("email") if isinstance(user, dict) else None
-    if not is_email_allowed(str(email) if email else None):
-        return None
     return user if isinstance(user, dict) else None
 
 
@@ -188,36 +253,53 @@ def refresh_session_tokens(refresh_token: str) -> tuple[str, str, int] | None:
     access_token = str(data.get("access_token") or "")
     new_refresh = str(data.get("refresh_token") or refresh_token)
     expires_in = int(data.get("expires_in") or 3600)
-    user = data.get("user") or {}
-    email = user.get("email") if isinstance(user, dict) else None
-    if email is not None and not is_email_allowed(str(email)):
-        return None
     if not access_token:
         return None
     return access_token, new_refresh, expires_in
 
 
+def resolve_authenticated_broker(
+    access_token: str | None,
+    refresh_token: str | None,
+    response: Response | None = None,
+) -> BrokerSession | None:
+    user = get_user_from_access_token(access_token or "")
+    if user is None:
+        refreshed = refresh_session_tokens(refresh_token or "")
+        if refreshed is None:
+            return None
+        new_access, new_refresh, expires_in = refreshed
+        user = get_user_from_access_token(new_access)
+        if user is None:
+            return None
+        if response is not None:
+            set_auth_cookies(response, new_access, new_refresh, expires_in)
+        access_token = new_access
+
+    try:
+        return resolve_broker_for_auth_user(user)
+    except PermissionError:
+        return None
+    except Exception:
+        logger.exception("Failed to resolve broker for authenticated user")
+        return None
+
+
+# Back-compat alias used by older call sites during refactor
 def resolve_authenticated_user(
     access_token: str | None,
     refresh_token: str | None,
     response: Response | None = None,
 ) -> dict[str, Any] | None:
-    user = get_user_from_access_token(access_token or "")
-    if user is not None:
-        return user
-
-    refreshed = refresh_session_tokens(refresh_token or "")
-    if refreshed is None:
+    broker = resolve_authenticated_broker(access_token, refresh_token, response)
+    if broker is None:
         return None
-
-    new_access, new_refresh, expires_in = refreshed
-    user = get_user_from_access_token(new_access)
-    if user is None:
-        return None
-
-    if response is not None:
-        set_auth_cookies(response, new_access, new_refresh, expires_in)
-    return user
+    return {
+        "id": broker.id,
+        "email": broker.email,
+        "display_name": broker.display_name,
+        "role": broker.role,
+    }
 
 
 def set_auth_cookies(

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Account · Trade Slip{% endblock %}
+{% block content %}
+<header class="mb-8">
+  <h1 class="text-3xl font-bold text-slate-900">Account</h1>
+  <p class="text-slate-600 mt-1">Manage your broker profile and password.</p>
+</header>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-4">Profile</h2>
+    <dl class="space-y-3 text-sm mb-6">
+      <div>
+        <dt class="text-slate-500">Email</dt>
+        <dd class="font-medium text-slate-900">{{ broker.email }}</dd>
+      </div>
+      <div>
+        <dt class="text-slate-500">Role</dt>
+        <dd class="font-medium text-slate-900 capitalize">{{ broker.role }}</dd>
+      </div>
+    </dl>
+    <form id="profileForm" class="space-y-4">
+      <div>
+        <label for="displayName" class="block text-sm font-medium text-slate-700 mb-1">Display name</label>
+        <input type="text" id="displayName" maxlength="120" required value="{{ broker.display_name }}"
+          class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+      <p id="profileStatus" class="hidden text-sm"></p>
+      <button type="submit" id="profileSaveBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Save profile</button>
+    </form>
+  </section>
+
+  <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-4">Change password</h2>
+    <form id="passwordForm" class="space-y-4">
+      <div>
+        <label for="newPassword" class="block text-sm font-medium text-slate-700 mb-1">New password</label>
+        <input type="password" id="newPassword" minlength="8" required autocomplete="new-password"
+          class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+      <div>
+        <label for="confirmPassword" class="block text-sm font-medium text-slate-700 mb-1">Confirm new password</label>
+        <input type="password" id="confirmPassword" minlength="8" required autocomplete="new-password"
+          class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+      <p id="passwordStatus" class="hidden text-sm"></p>
+      <button type="submit" id="passwordSaveBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Update password</button>
+    </form>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  function showMsg(el, message, ok) {
+    el.textContent = message;
+    el.classList.remove("hidden", "text-red-600", "text-green-600");
+    el.classList.add(ok ? "text-green-600" : "text-red-600");
+  }
+
+  document.getElementById("profileForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = document.getElementById("profileSaveBtn");
+    const status = document.getElementById("profileStatus");
+    btn.disabled = true;
+    try {
+      const response = await TradeSlip.apiFetch("/api/account/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: document.getElementById("displayName").value.trim() }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      showMsg(status, "Profile saved.", true);
+      setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      showMsg(status, error.message, false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("passwordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const btn = document.getElementById("passwordSaveBtn");
+    const status = document.getElementById("passwordStatus");
+    const next = document.getElementById("newPassword").value;
+    const confirm = document.getElementById("confirmPassword").value;
+    if (next !== confirm) {
+      showMsg(status, "Passwords do not match.", false);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const response = await TradeSlip.apiFetch("/api/account/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_password: next }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      showMsg(status, "Password updated.", true);
+      document.getElementById("passwordForm").reset();
+    } catch (error) {
+      showMsg(status, error.message, false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+{% endblock %}

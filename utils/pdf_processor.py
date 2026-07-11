@@ -211,10 +211,17 @@ def parse_trade_date_partitions(trade_date_iso: str) -> tuple[str, str, str]:
     return year, month, day
 
 
-def storage_path_for(client_code: str, trade_date_iso: str) -> str:
+def storage_path_for(
+    client_code: str,
+    trade_date_iso: str,
+    broker_id: str | None = None,
+) -> str:
     year, month, day = parse_trade_date_partitions(trade_date_iso)
     safe_code = safe_filename(client_code)
-    return f"{year}/{month}/{day}/{safe_code}_{trade_date_iso}.pdf"
+    filename = f"{safe_code}_{trade_date_iso}.pdf"
+    if broker_id:
+        return f"{broker_id.strip()}/{year}/{month}/{day}/{filename}"
+    return f"{year}/{month}/{day}/{filename}"
 
 
 def truncate_to_width(text: str, max_width: float, font_name: str, font_size: float) -> str:
@@ -377,6 +384,7 @@ def process_trades_csv(
     template_path: Path,
     trade_date_iso: str,
     original_filename: str | None = None,
+    broker_id: str | None = None,
 ) -> list[GeneratedSlip]:
     if not template_path.exists():
         raise FileNotFoundError(f"PDF template not found: {template_path}")
@@ -403,7 +411,7 @@ def process_trades_csv(
                 trade_date_iso=trade_date_iso,
                 trade_date_display=trade_date_display,
                 pdf_bytes=pdf_bytes,
-                storage_path=storage_path_for(client_code, trade_date_iso),
+                storage_path=storage_path_for(client_code, trade_date_iso, broker_id=broker_id),
             )
         )
 

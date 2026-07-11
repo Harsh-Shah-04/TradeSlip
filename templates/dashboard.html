@@ -1,250 +1,145 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Trade Slip Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-100 min-h-screen text-slate-800">
-  <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm px-4">
-    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-8">
-      <div class="text-center mb-6">
-        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
-        <h2 class="text-2xl font-bold text-slate-900">Broker Sign In</h2>
-        <p class="text-slate-600 text-sm mt-1">Sign in with your Supabase account to access trade slips.</p>
-      </div>
-      <form id="loginForm" class="space-y-4">
-        <div>
-          <label for="loginEmail" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
-          <input
-            type="email"
-            id="loginEmail"
-            autocomplete="username"
-            required
-            class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            placeholder="you@example.com"
-          />
-        </div>
-        <div>
-          <label for="loginPassword" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
-          <div class="relative">
-            <input
-              type="password"
-              id="loginPassword"
-              autocomplete="current-password"
-              required
-              class="w-full rounded-lg border border-slate-300 px-3 py-2.5 pr-11 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="Password"
-            />
-            <button
-              type="button"
-              id="togglePasswordBtn"
-              class="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700 focus:outline-none"
-              aria-label="Show password"
-              aria-pressed="false"
-            >
-              <svg id="passwordEyeIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-              <svg id="passwordEyeOffIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <p id="loginError" class="hidden text-sm text-red-600"></p>
+{% extends "base.html" %}
+{% block title %}Dashboard · Trade Slip{% endblock %}
+{% block content %}
+<header class="mb-8">
+  <h1 class="text-3xl font-bold text-slate-900">Trade Slip Dashboard</h1>
+  <p class="text-slate-600 mt-1">Upload daily trade CSV, track unsigned slips, and store signed copies.</p>
+</header>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+  <h2 class="text-lg font-semibold mb-4">Filters &amp; Upload</h2>
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div>
+      <label for="tradeDate" class="block text-sm font-medium text-slate-700 mb-1">Trade Date</label>
+      <div class="flex gap-2">
+        <input type="date" id="tradeDate" class="flex-1 min-w-0 rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
         <button
-          type="submit"
-          id="loginSubmitBtn"
-          class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+          type="button"
+          id="downloadZipBtn"
+          class="inline-flex items-center gap-2 shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+          title="Download all slips for this date as a ZIP"
         >
-          Sign In
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
+          </svg>
+          <span class="hidden sm:inline">Download Day ZIP</span>
+          <span class="sm:hidden">ZIP</span>
         </button>
-      </form>
+      </div>
+    </div>
+    <div>
+      <label for="clientSearch" class="block text-sm font-medium text-slate-700 mb-1">Client Code</label>
+      <input type="text" id="clientSearch" placeholder="Search client code..." class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+    </div>
+    <div class="md:col-span-2">
+      <span class="block text-sm font-medium text-slate-700 mb-1">Status</span>
+      <div class="flex gap-2" id="statusFilters">
+        <button type="button" data-status="" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-blue-600 text-white">All</button>
+        <button type="button" data-status="Unsigned" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Unsigned</button>
+        <button type="button" data-status="Signed" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Signed</button>
+      </div>
     </div>
   </div>
 
-  <div id="dashboardApp" class="hidden max-w-7xl mx-auto px-4 py-8">
-    <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+  <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
+    <input type="file" id="csvInput" accept=".csv" class="hidden" />
+    <p class="text-slate-700 font-medium">Drag &amp; drop daily master trade CSV here</p>
+    <p class="text-slate-500 text-sm mt-1">or click to browse</p>
+    <p id="uploadStatus" class="text-sm mt-3 text-slate-600"></p>
+  </div>
+</section>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+  <div class="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <h2 class="text-lg font-semibold">Trade Slips</h2>
+      <span id="slipCount" class="text-sm text-slate-500">0 slips</span>
+    </div>
+    <p id="tableStatus" class="text-sm text-slate-500 hidden"></p>
+  </div>
+
+  <div id="bulkBar" class="hidden px-6 py-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <p class="text-sm font-medium text-slate-700">
+      <span id="selectedCount">0</span> selected
+    </p>
+    <div class="flex items-center gap-2">
+      <button type="button" id="clearSelectionBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Clear</button>
+      <button type="button" id="bulkDeleteBtn" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700">Delete selected</button>
+    </div>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="px-4 py-3 w-12">
+            <input type="checkbox" id="selectAllSlips" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" aria-label="Select all slips" />
+          </th>
+          <th class="px-4 py-3">Client Code</th>
+          <th class="px-4 py-3">Client Name</th>
+          <th class="px-4 py-3">Trade Date</th>
+          <th class="px-4 py-3">Status</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="slipsBody" class="divide-y divide-slate-100">
+        <tr>
+          <td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading slips...</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<input type="file" id="hiddenSignedUpload" accept=".pdf,application/pdf" class="hidden" />
+<input type="file" id="hiddenUnsignedUpload" accept=".pdf,application/pdf" class="hidden" />
+
+<div id="editModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+    <div class="flex items-start justify-between gap-4 mb-4">
       <div>
-        <h1 class="text-3xl font-bold text-slate-900">Trade Slip Dashboard</h1>
-        <p class="text-slate-600 mt-1">Upload daily trade CSV, track unsigned slips, and store signed copies.</p>
+        <h3 id="editModalTitle" class="text-xl font-semibold text-slate-900">Edit slip</h3>
+        <p id="editModalSubtitle" class="text-sm text-slate-500 mt-1"></p>
       </div>
-      <button
-        type="button"
-        id="logoutBtn"
-        class="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 transition-colors"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6a2 2 0 012 2v1" />
-        </svg>
-        Logout
+      <button type="button" id="editModalCloseBtn" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
       </button>
-    </header>
-
-    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-      <h2 class="text-lg font-semibold mb-4">Filters &amp; Upload</h2>
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div>
-          <label for="tradeDate" class="block text-sm font-medium text-slate-700 mb-1">Trade Date</label>
-          <div class="flex gap-2">
-            <input type="date" id="tradeDate" class="flex-1 min-w-0 rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button
-              type="button"
-              id="downloadZipBtn"
-              class="inline-flex items-center gap-2 shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-              title="Download all slips for this date as a ZIP"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
-              </svg>
-              <span class="hidden sm:inline">Download Day ZIP</span>
-              <span class="sm:hidden">ZIP</span>
-            </button>
-          </div>
-        </div>
-        <div>
-          <label for="clientSearch" class="block text-sm font-medium text-slate-700 mb-1">Client Code</label>
-          <input type="text" id="clientSearch" placeholder="Search client code..." class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-        </div>
-        <div class="md:col-span-2">
-          <span class="block text-sm font-medium text-slate-700 mb-1">Status</span>
-          <div class="flex gap-2" id="statusFilters">
-            <button type="button" data-status="" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-blue-600 text-white">All</button>
-            <button type="button" data-status="Unsigned" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Unsigned</button>
-            <button type="button" data-status="Signed" class="status-btn px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50">Signed</button>
-          </div>
-        </div>
+    </div>
+    <form id="editSlipForm" class="space-y-4">
+      <div>
+        <label for="editClientName" class="block text-sm font-medium text-slate-700 mb-1">Client name</label>
+        <input type="text" id="editClientName" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
       </div>
-
-      <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
-        <input type="file" id="csvInput" accept=".csv" class="hidden" />
-        <p class="text-slate-700 font-medium">Drag &amp; drop daily master trade CSV here</p>
-        <p class="text-slate-500 text-sm mt-1">or click to browse</p>
-        <p id="uploadStatus" class="text-sm mt-3 text-slate-600"></p>
+      <div>
+        <label for="editPdfFile" class="block text-sm font-medium text-slate-700 mb-1">Replace PDF <span class="text-slate-400 font-normal">(optional)</span></label>
+        <input type="file" id="editPdfFile" accept=".pdf,application/pdf" class="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700" />
+        <p class="text-xs text-slate-500 mt-1">Replacing the PDF keeps the current status. Use “Reupload unsigned” from the menu to force Unsigned.</p>
       </div>
-    </section>
-
-    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div class="flex items-center gap-3">
-          <h2 class="text-lg font-semibold">Trade Slips</h2>
-          <span id="slipCount" class="text-sm text-slate-500">0 slips</span>
-        </div>
-        <p id="tableStatus" class="text-sm text-slate-500 hidden"></p>
+      <p id="editModalError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="editModalCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" id="editModalSaveBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed">Save changes</button>
       </div>
-
-      <div id="bulkBar" class="hidden px-6 py-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <p class="text-sm font-medium text-slate-700">
-          <span id="selectedCount">0</span> selected
-        </p>
-        <div class="flex items-center gap-2">
-          <button type="button" id="clearSelectionBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Clear</button>
-          <button type="button" id="bulkDeleteBtn" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700">Delete selected</button>
-        </div>
-      </div>
-
-      <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm">
-          <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wide">
-            <tr>
-              <th class="px-4 py-3 w-12">
-                <input type="checkbox" id="selectAllSlips" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" aria-label="Select all slips" />
-              </th>
-              <th class="px-4 py-3">Client Code</th>
-              <th class="px-4 py-3">Client Name</th>
-              <th class="px-4 py-3">Trade Date</th>
-              <th class="px-4 py-3">Status</th>
-              <th class="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="slipsBody" class="divide-y divide-slate-100">
-            <tr>
-              <td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading slips...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    </form>
   </div>
+</div>
 
-  <input type="file" id="hiddenSignedUpload" accept=".pdf,application/pdf" class="hidden" />
-  <input type="file" id="hiddenUnsignedUpload" accept=".pdf,application/pdf" class="hidden" />
-
-  <div id="editModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-    <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
-      <div class="flex items-start justify-between gap-4 mb-4">
-        <div>
-          <h3 id="editModalTitle" class="text-xl font-semibold text-slate-900">Edit slip</h3>
-          <p id="editModalSubtitle" class="text-sm text-slate-500 mt-1"></p>
-        </div>
-        <button type="button" id="editModalCloseBtn" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-      <form id="editSlipForm" class="space-y-4">
-        <div>
-          <label for="editClientName" class="block text-sm font-medium text-slate-700 mb-1">Client name</label>
-          <input type="text" id="editClientName" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div>
-          <label for="editPdfFile" class="block text-sm font-medium text-slate-700 mb-1">Replace PDF <span class="text-slate-400 font-normal">(optional)</span></label>
-          <input type="file" id="editPdfFile" accept=".pdf,application/pdf" class="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700" />
-          <p class="text-xs text-slate-500 mt-1">Replacing the PDF keeps the current status. Use “Reupload unsigned” from the menu to force Unsigned.</p>
-        </div>
-        <p id="editModalError" class="hidden text-sm text-red-600"></p>
-        <div class="flex justify-end gap-2 pt-2">
-          <button type="button" id="editModalCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-          <button type="submit" id="editModalSaveBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed">Save changes</button>
-        </div>
-      </form>
+<div id="confirmModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+    <h3 id="confirmModalTitle" class="text-xl font-semibold text-slate-900">Delete permanently?</h3>
+    <p id="confirmModalMessage" class="text-sm text-slate-600 mt-2"></p>
+    <p id="confirmModalStatus" class="hidden text-sm text-blue-600 mt-3"></p>
+    <div class="flex justify-end gap-2 mt-6">
+      <button type="button" id="confirmCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <button type="button" id="confirmOkBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed">Delete</button>
     </div>
   </div>
+</div>
+{% endblock %}
 
-  <div id="confirmModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
-    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
-      <h3 id="confirmModalTitle" class="text-xl font-semibold text-slate-900">Delete permanently?</h3>
-      <p id="confirmModalMessage" class="text-sm text-slate-600 mt-2"></p>
-      <p id="confirmModalStatus" class="hidden text-sm text-blue-600 mt-3"></p>
-      <div class="flex justify-end gap-2 mt-6">
-        <button type="button" id="confirmCancelBtn" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        <button type="button" id="confirmOkBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed">Delete</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="progressModal" class="hidden fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 px-4">
-    <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200 p-6 text-center" role="status" aria-live="polite" aria-busy="true">
-      <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
-        <svg class="h-6 w-6 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-      </div>
-      <h3 id="progressModalTitle" class="text-lg font-semibold text-slate-900">Working…</h3>
-      <p id="progressModalMessage" class="text-sm text-slate-600 mt-2">Please wait.</p>
-    </div>
-  </div>
-
-  <script>
-    const loginOverlay = document.getElementById("loginOverlay");
-    const dashboardApp = document.getElementById("dashboardApp");
-    const loginForm = document.getElementById("loginForm");
-    const loginEmailEl = document.getElementById("loginEmail");
-    const loginPasswordEl = document.getElementById("loginPassword");
-    const loginErrorEl = document.getElementById("loginError");
-    const loginSubmitBtn = document.getElementById("loginSubmitBtn");
-    const togglePasswordBtn = document.getElementById("togglePasswordBtn");
-    const passwordEyeIcon = document.getElementById("passwordEyeIcon");
-    const passwordEyeOffIcon = document.getElementById("passwordEyeOffIcon");
-    const logoutBtn = document.getElementById("logoutBtn");
-
+{% block scripts %}
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
     const tradeDateEl = document.getElementById("tradeDate");
     const clientSearchEl = document.getElementById("clientSearch");
     const slipsBody = document.getElementById("slipsBody");
@@ -279,9 +174,6 @@
     const confirmCancelBtn = document.getElementById("confirmCancelBtn");
     const confirmOkBtn = document.getElementById("confirmOkBtn");
     const confirmOkDefaultHtml = confirmOkBtn.innerHTML;
-    const progressModal = document.getElementById("progressModal");
-    const progressModalTitle = document.getElementById("progressModalTitle");
-    const progressModalMessage = document.getElementById("progressModalMessage");
     const editModalSaveDefaultHtml = editModalSaveBtn.innerHTML;
 
     let selectedStatus = "";
@@ -290,7 +182,6 @@
     let loadSlipsRequestId = 0;
     const SEARCH_DEBOUNCE_MS = 300;
     let currentSlipCount = 0;
-    let isAuthenticated = false;
     let currentSlips = [];
     let selectedKeys = new Set();
     let openMenuKey = null;
@@ -299,30 +190,8 @@
     let confirmResolver = null;
     let confirmBusy = false;
 
-    function todayIso() {
-      const d = new Date();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${d.getFullYear()}-${m}-${day}`;
-    }
-
     function slipKey(slip) {
       return `${slip.client_code}__${slip.trade_date}`;
-    }
-
-    function setAuthenticated(authenticated) {
-      isAuthenticated = authenticated;
-      loginOverlay.classList.toggle("hidden", authenticated);
-      dashboardApp.classList.toggle("hidden", !authenticated);
-      if (!authenticated) {
-        loginEmailEl.value = "";
-        loginPasswordEl.value = "";
-        loginErrorEl.classList.add("hidden");
-        loginErrorEl.textContent = "";
-        selectedKeys.clear();
-        currentSlips = [];
-        updateBulkBar();
-      }
     }
 
     function setTableStatus(message, tone) {
@@ -336,38 +205,6 @@
       tableStatusEl.classList.add(
         tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : tone === "info" ? "text-blue-600" : "text-slate-500"
       );
-    }
-
-    function parseErrorDetail(payload) {
-      const detail = payload && payload.detail;
-      if (!detail) return "Request failed.";
-      if (typeof detail === "string") return detail;
-      if (Array.isArray(detail)) {
-        return detail.map((item) => item.msg || JSON.stringify(item)).join(", ");
-      }
-      return "Request failed.";
-    }
-
-    async function apiFetch(url, options = {}) {
-      const response = await fetch(url, {
-        ...options,
-        credentials: "include",
-      });
-      if (response.status === 401) {
-        setAuthenticated(false);
-        throw new Error("Your session has expired. Please sign in again.");
-      }
-      return response;
-    }
-
-    function showProgress(title, message) {
-      progressModalTitle.textContent = title || "Working…";
-      progressModalMessage.textContent = message || "Please wait.";
-      progressModal.classList.remove("hidden");
-    }
-
-    function hideProgress() {
-      progressModal.classList.add("hidden");
     }
 
     function askConfirm(message) {
@@ -447,57 +284,6 @@
       });
     }
 
-    async function checkSession() {
-      try {
-        const response = await fetch("/api/auth/session", { credentials: "include" });
-        if (response.ok) {
-          setAuthenticated(true);
-          tradeDateEl.value = todayIso();
-          setStatusButtons("");
-          await loadSlips();
-          return;
-        }
-      } catch (error) {
-        console.error(error);
-      }
-      setAuthenticated(false);
-    }
-
-    async function login(email, password) {
-      loginSubmitBtn.disabled = true;
-      loginErrorEl.classList.add("hidden");
-      try {
-        const response = await fetch("/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ email, password }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(parseErrorDetail(payload) || "Invalid email or password.");
-        }
-        setAuthenticated(true);
-        tradeDateEl.value = todayIso();
-        setStatusButtons("");
-        await loadSlips();
-      } catch (error) {
-        loginErrorEl.textContent = error.message;
-        loginErrorEl.classList.remove("hidden");
-      } finally {
-        loginSubmitBtn.disabled = false;
-      }
-    }
-
-    async function logout() {
-      try {
-        await fetch("/api/logout", { method: "POST", credentials: "include" });
-      } catch (error) {
-        console.error(error);
-      }
-      setAuthenticated(false);
-    }
-
     function openWithCacheBust(url) {
       if (!url) return;
       const separator = url.includes("?") ? "&" : "?";
@@ -505,12 +291,12 @@
     }
 
     async function viewSlipFile(storagePath) {
-      if (!storagePath || !isAuthenticated) return;
+      if (!storagePath) return;
       const params = new URLSearchParams({ path: storagePath });
       try {
-        const response = await apiFetch("/api/slips/sign-url?" + params.toString());
+        const response = await TradeSlip.apiFetch("/api/slips/sign-url?" + params.toString());
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         const signedUrl = payload.signed_url || payload.signedURL;
         if (!signedUrl) throw new Error("Signed URL was not returned by the server.");
         openWithCacheBust(signedUrl);
@@ -541,14 +327,6 @@
       return '<span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">Unsigned</span>';
     }
 
-    function escapeHtml(value) {
-      return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    }
-
     function updateBulkBar() {
       const count = selectedKeys.size;
       selectedCountEl.textContent = String(count);
@@ -566,10 +344,10 @@
     }
 
     function renderActions(slip) {
-      const key = escapeHtml(slipKey(slip));
-      const storagePath = escapeHtml(slip.storage_path || "");
-      const clientCode = escapeHtml(slip.client_code);
-      const tradeDate = escapeHtml(slip.trade_date);
+      const key = TradeSlip.escapeHtml(slipKey(slip));
+      const storagePath = TradeSlip.escapeHtml(slip.storage_path || "");
+      const clientCode = TradeSlip.escapeHtml(slip.client_code);
+      const tradeDate = TradeSlip.escapeHtml(slip.trade_date);
       const viewLabel = slip.status === "Signed" ? "View signed slip" : "View slip";
       return `
         <div class="relative flex justify-end">
@@ -669,8 +447,6 @@
     }
 
     async function loadSlips() {
-      if (!isAuthenticated) return;
-
       if (slipsFetchController) slipsFetchController.abort();
       slipsFetchController = new AbortController();
       const fetchSignal = slipsFetchController.signal;
@@ -688,10 +464,10 @@
       slipsBody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading slips...</td></tr>';
 
       try {
-        const response = await apiFetch("/api/slips?" + params.toString(), { signal: fetchSignal });
+        const response = await TradeSlip.apiFetch("/api/slips?" + params.toString(), { signal: fetchSignal });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          throw new Error(parseErrorDetail(err));
+          throw new Error(TradeSlip.parseErrorDetail(err));
         }
         const slips = await response.json();
         if (requestId !== loadSlipsRequestId) return;
@@ -710,13 +486,13 @@
           .map((slip) => {
             const key = slipKey(slip);
             return `
-          <tr class="hover:bg-slate-50" data-key="${escapeHtml(key)}">
+          <tr class="hover:bg-slate-50" data-key="${TradeSlip.escapeHtml(key)}">
             <td class="px-4 py-4">
-              <input type="checkbox" class="slip-checkbox h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" data-key="${escapeHtml(key)}" aria-label="Select ${escapeHtml(slip.client_code)}" />
+              <input type="checkbox" class="slip-checkbox h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" data-key="${TradeSlip.escapeHtml(key)}" aria-label="Select ${TradeSlip.escapeHtml(slip.client_code)}" />
             </td>
-            <td class="px-4 py-4 font-mono font-medium">${escapeHtml(slip.client_code)}</td>
-            <td class="px-4 py-4">${escapeHtml(slip.client_name)}</td>
-            <td class="px-4 py-4">${escapeHtml(slip.trade_date)}</td>
+            <td class="px-4 py-4 font-mono font-medium">${TradeSlip.escapeHtml(slip.client_code)}</td>
+            <td class="px-4 py-4">${TradeSlip.escapeHtml(slip.client_name)}</td>
+            <td class="px-4 py-4">${TradeSlip.escapeHtml(slip.trade_date)}</td>
             <td class="px-4 py-4">${statusBadge(slip.status)}</td>
             <td class="px-4 py-4">${renderActions(slip)}</td>
           </tr>`;
@@ -730,7 +506,7 @@
         if (requestId !== loadSlipsRequestId) return;
         currentSlipCount = 0;
         currentSlips = [];
-        slipsBody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-red-600">${escapeHtml(error.message)}</td></tr>`;
+        slipsBody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-red-600">${TradeSlip.escapeHtml(error.message)}</td></tr>`;
         updateBulkBar();
       }
     }
@@ -773,15 +549,15 @@
         '<svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' +
         (hasPdf ? "Uploading…" : "Saving…");
       if (hasPdf) {
-        showProgress("Uploading PDF…", `Updating ${editingSlip.client_code}. Please wait.`);
+        TradeSlip.showProgress("Uploading PDF…", `Updating ${editingSlip.client_code}. Please wait.`);
       }
       try {
-        const response = await apiFetch(
+        const response = await TradeSlip.apiFetch(
           `/api/slips/${encodeURIComponent(editingSlip.client_code)}/${encodeURIComponent(editingSlip.trade_date)}`,
           { method: "PATCH", body: formData }
         );
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         closeEditModal();
         setTableStatus("Slip updated.", "success");
         await loadSlips();
@@ -789,7 +565,7 @@
         editModalError.textContent = error.message;
         editModalError.classList.remove("hidden");
       } finally {
-        hideProgress();
+        TradeSlip.hideProgress();
         editModalSaveBtn.disabled = false;
         editModalSaveBtn.innerHTML = editModalSaveDefaultHtml;
       }
@@ -818,12 +594,12 @@
       markRowsDeleting([key]);
       setTableStatus("Deleting…", "info");
       try {
-        const response = await apiFetch(
+        const response = await TradeSlip.apiFetch(
           `/api/slips/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}`,
           { method: "DELETE" }
         );
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         removeSlipsFromUi([key]);
         confirmModal.classList.add("hidden");
         confirmBusy = false;
@@ -862,7 +638,7 @@
       markRowsDeleting(keys);
       setTableStatus("Deleting selected slips…", "info");
       try {
-        const response = await apiFetch("/api/slips/bulk-delete", {
+        const response = await TradeSlip.apiFetch("/api/slips/bulk-delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -870,7 +646,7 @@
           }),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
 
         const deletedKeys = (payload.deleted || []).map(
           (item) => `${item.client_code}__${item.trade_date}`
@@ -907,7 +683,6 @@
     }
 
     async function downloadDayZip() {
-      if (!isAuthenticated) return;
       const selectedDate = tradeDateEl.value;
       if (!selectedDate) {
         alert("Please select a trade date first.");
@@ -915,7 +690,7 @@
       }
       if (currentSlipCount === 0) {
         try {
-          const response = await apiFetch(`/api/slips?trade_date=${encodeURIComponent(selectedDate)}`);
+          const response = await TradeSlip.apiFetch(`/api/slips?trade_date=${encodeURIComponent(selectedDate)}`);
           if (response.ok) {
             const slips = await response.json();
             if (slips.length > 0) {
@@ -925,7 +700,7 @@
           }
         } catch (error) {
           console.error(error);
-          if (!isAuthenticated) return;
+          return;
         }
         alert("There are no trade slips to download for this date yet. Upload a daily CSV first.");
         return;
@@ -934,11 +709,11 @@
     }
 
     async function uploadCsv(file) {
-      if (!file || !isAuthenticated) return;
+      if (!file) return;
       uploadStatusEl.innerHTML =
         '<span class="inline-flex items-center gap-2"><svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Uploading and generating slips…</span>';
       uploadStatusEl.className = "text-sm mt-3 text-blue-600";
-      showProgress("Uploading CSV…", "Generating trade slips. This may take a moment.");
+      TradeSlip.showProgress("Uploading CSV…", "Generating trade slips. This may take a moment.");
       dropZone.classList.add("pointer-events-none", "opacity-60");
 
       const formData = new FormData();
@@ -946,9 +721,9 @@
       formData.append("trade_date", tradeDateEl.value);
 
       try {
-        const response = await apiFetch("/api/upload-trades", { method: "POST", body: formData });
+        const response = await TradeSlip.apiFetch("/api/upload-trades", { method: "POST", body: formData });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         uploadStatusEl.textContent = `Generated ${payload.generated} slip(s) successfully.`;
         uploadStatusEl.className = "text-sm mt-3 text-green-600";
         await loadSlips();
@@ -956,13 +731,13 @@
         uploadStatusEl.textContent = error.message;
         uploadStatusEl.className = "text-sm mt-3 text-red-600";
       } finally {
-        hideProgress();
+        TradeSlip.hideProgress();
         dropZone.classList.remove("pointer-events-none", "opacity-60");
       }
     }
 
     async function handleHiddenUpload(input, mode) {
-      if (!isAuthenticated || !pendingUploadTarget || pendingUploadTarget.mode !== mode) return;
+      if (!pendingUploadTarget || pendingUploadTarget.mode !== mode) return;
       const file = input.files[0];
       if (!file) return;
 
@@ -976,14 +751,14 @@
           : `/api/slips/${encodeURIComponent(clientCode)}/${encodeURIComponent(tradeDate)}/reupload-unsigned`;
 
       const title = mode === "signed" ? "Uploading signed copy…" : "Reuploading unsigned PDF…";
-      showProgress(title, `Uploading for ${clientCode}. Please wait.`);
+      TradeSlip.showProgress(title, `Uploading for ${clientCode}. Please wait.`);
       markRowsDeleting([key]);
       setTableStatus(title, "info");
       input.disabled = true;
       try {
-        const response = await apiFetch(url, { method: "POST", body: formData });
+        const response = await TradeSlip.apiFetch(url, { method: "POST", body: formData });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(parseErrorDetail(payload));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         setTableStatus(
           mode === "signed" ? `Signed copy saved for ${clientCode}.` : `Unsigned PDF replaced for ${clientCode}.`,
           "success"
@@ -993,7 +768,7 @@
         clearRowsDeleting([key]);
         setTableStatus(error.message, "error");
       } finally {
-        hideProgress();
+        TradeSlip.hideProgress();
         input.value = "";
         input.disabled = false;
         pendingUploadTarget = null;
@@ -1011,21 +786,6 @@
       uploadCsv(file);
     }
 
-    loginForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      login(loginEmailEl.value.trim(), loginPasswordEl.value);
-    });
-
-    togglePasswordBtn.addEventListener("click", () => {
-      const showing = loginPasswordEl.type === "text";
-      loginPasswordEl.type = showing ? "password" : "text";
-      passwordEyeIcon.classList.toggle("hidden", !showing);
-      passwordEyeOffIcon.classList.toggle("hidden", showing);
-      togglePasswordBtn.setAttribute("aria-pressed", showing ? "false" : "true");
-      togglePasswordBtn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
-    });
-
-    logoutBtn.addEventListener("click", logout);
     tradeDateEl.addEventListener("change", loadSlips);
     downloadZipBtn.addEventListener("click", downloadDayZip);
     clientSearchEl.addEventListener("input", scheduleDebouncedLoadSlips);
@@ -1097,7 +857,10 @@
       handleCsvFiles(e.dataTransfer.files);
     });
 
-    checkSession();
-  </script>
-</body>
-</html>
+    const queryDate = new URLSearchParams(window.location.search).get("date");
+    tradeDateEl.value = /^\d{4}-\d{2}-\d{2}$/.test(queryDate || "") ? queryDate : TradeSlip.todayIso();
+    setStatusButtons("");
+    loadSlips();
+  });
+</script>
+{% endblock %}

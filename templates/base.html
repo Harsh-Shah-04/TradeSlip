@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Trade Slip{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+  {% if broker %}
+  <nav class="border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/dashboard" class="text-lg font-bold text-slate-900">TradeSlip</a>
+        <div class="flex flex-wrap items-center gap-1 text-sm font-medium">
+          <a href="/dashboard" class="rounded-lg px-3 py-1.5 {% if nav_active == 'dashboard' %}bg-indigo-50 text-indigo-700{% else %}text-slate-600 hover:bg-slate-50{% endif %}">Dashboard</a>
+          <a href="/history" class="rounded-lg px-3 py-1.5 {% if nav_active == 'history' %}bg-indigo-50 text-indigo-700{% else %}text-slate-600 hover:bg-slate-50{% endif %}">History</a>
+          <a href="/account" class="rounded-lg px-3 py-1.5 {% if nav_active == 'account' %}bg-indigo-50 text-indigo-700{% else %}text-slate-600 hover:bg-slate-50{% endif %}">Account</a>
+          {% if is_admin %}
+          <a href="/admin/users" class="rounded-lg px-3 py-1.5 {% if nav_active == 'admin' %}bg-indigo-50 text-indigo-700{% else %}text-slate-600 hover:bg-slate-50{% endif %}">Admin</a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span class="text-slate-600">{{ broker.display_name }} <span class="text-slate-400">({{ broker.email }})</span></span>
+        <button type="button" id="navLogoutBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Logout</button>
+      </div>
+    </div>
+  </nav>
+  {% endif %}
+
+  <main class="{% block main_class %}max-w-7xl mx-auto px-4 py-8{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="progressModal" class="hidden fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 px-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200 p-6 text-center" role="status" aria-live="polite" aria-busy="true">
+      <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+        <svg class="h-6 w-6 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </div>
+      <h3 id="progressModalTitle" class="text-lg font-semibold text-slate-900">Working…</h3>
+      <p id="progressModalMessage" class="text-sm text-slate-600 mt-2">Please wait.</p>
+    </div>
+  </div>
+
+  <script src="/static/js/common.js"></script>
+  <script>
+    (function () {
+      const logoutBtn = document.getElementById("navLogoutBtn");
+      if (logoutBtn) logoutBtn.addEventListener("click", () => TradeSlip.logout());
+
+      const progressModal = document.getElementById("progressModal");
+      const progressModalTitle = document.getElementById("progressModalTitle");
+      const progressModalMessage = document.getElementById("progressModalMessage");
+      TradeSlip.showProgress = function (title, message) {
+        progressModalTitle.textContent = title || "Working…";
+        progressModalMessage.textContent = message || "Please wait.";
+        progressModal.classList.remove("hidden");
+      };
+      TradeSlip.hideProgress = function () {
+        progressModal.classList.add("hidden");
+      };
+    })();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
