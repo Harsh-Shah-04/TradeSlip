@@ -42,6 +42,7 @@
       <button type="button" id="historyBulkZipBtn" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">Download selected ZIPs</button>
     </div>
   </div>
+  <p class="px-6 pb-3 text-xs text-slate-500">Tip: up to 5 days download as one ZIP. More than 5 days downloads one ZIP per day (avoids timeouts).</p>
 
   <div class="overflow-x-auto">
     <table class="w-full text-left text-sm">
@@ -168,16 +169,67 @@
     }
   }
 
+  async function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadDayBlob(date) {
+    const response = await TradeSlip.apiFetch(`/api/download-zip/${encodeURIComponent(date)}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(TradeSlip.parseErrorDetail(payload));
+    }
+    return response.blob();
+  }
+
   function downloadSingleZip(date) {
     TradeSlip.showProgress("Preparing ZIP…", `Building archive for ${date}.`);
-    // Navigation download — briefly show progress then navigate
-    window.location.href = `/api/download-zip/${encodeURIComponent(date)}`;
-    setTimeout(() => TradeSlip.hideProgress(), 1500);
+    downloadDayBlob(date)
+      .then((blob) => saveBlob(blob, `TradeSlips_${date}.zip`))
+      .then(() => setStatus(`Downloaded ZIP for ${date}.`, "success"))
+      .catch((error) => setStatus(error.message, "error"))
+      .finally(() => TradeSlip.hideProgress());
   }
 
   async function downloadBulkZip() {
     if (selectedDates.size === 0) return;
     const dates = [...selectedDates].sort();
+    const MAX_BULK_DAYS = 5;
+
+    // Large selections: download one ZIP per day (avoids Vercel 504 timeouts).
+    if (dates.length > MAX_BULK_DAYS) {
+      TradeSlip.showProgress(
+        "Downloading day by day…",
+        `Selected ${dates.length} days. Downloading up to ${MAX_BULK_DAYS} at a time is safer as one ZIP; downloading each day separately.`
+      );
+      try {
+        for (let i = 0; i < dates.length; i += 1) {
+          const date = dates[i];
+          TradeSlip.showProgress(
+            `Downloading ${i + 1} of ${dates.length}…`,
+            `Building ZIP for ${date}.`
+          );
+          const blob = await downloadDayBlob(date);
+          await saveBlob(blob, `TradeSlips_${date}.zip`);
+          // Brief pause so the browser can start each download cleanly
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        setStatus(`Downloaded ${dates.length} day ZIP(s).`, "success");
+      } catch (error) {
+        setStatus(error.message, "error");
+      } finally {
+        TradeSlip.hideProgress();
+      }
+      return;
+    }
+
     TradeSlip.showProgress("Preparing ZIP…", `Building archive for ${dates.length} day(s).`);
     try {
       const response = await TradeSlip.apiFetch("/api/download-zip/bulk", {
@@ -190,17 +242,26 @@
         throw new Error(TradeSlip.parseErrorDetail(payload));
       }
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `TradeSlips_bulk_${dates.length}_days.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await saveBlob(blob, `TradeSlips_bulk_${dates.length}_days.zip`);
       setStatus(`Downloaded ZIP for ${dates.length} day(s).`, "success");
     } catch (error) {
-      setStatus(error.message, "error");
+      // Fall back to per-day downloads if bulk times out / fails
+      setStatus(`${error.message} Trying day-by-day…`, "info");
+      try {
+        for (let i = 0; i < dates.length; i += 1) {
+          const date = dates[i];
+          TradeSlip.showProgress(
+            `Fallback ${i + 1} of ${dates.length}…`,
+            `Building ZIP for ${date}.`
+          );
+          const blob = await downloadDayBlob(date);
+          await saveBlob(blob, `TradeSlips_${date}.zip`);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        setStatus(`Downloaded ${dates.length} day ZIP(s) (day-by-day).`, "success");
+      } catch (fallbackError) {
+        setStatus(fallbackError.message, "error");
+      }
     } finally {
       TradeSlip.hideProgress();
     }

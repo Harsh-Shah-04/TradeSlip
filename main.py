@@ -44,7 +44,7 @@ from utils.supabase_client import (
     create_signed_slip_url,
     delete_slip_row,
     delete_storage_object,
-    download_slip_bytes,
+    download_slip_bytes_many,
     get_broker_by_email,
     get_slip_row,
     list_brokers,
@@ -109,18 +109,26 @@ class BulkDeleteRequest(BaseModel):
 
 
 class BulkZipRequest(BaseModel):
-    dates: list[str] = Field(min_length=1, max_length=60)
+    # Keep bulk small enough for Vercel serverless timeouts.
+    dates: list[str] = Field(min_length=1, max_length=5)
 
     @field_validator("dates")
     @classmethod
     def validate_dates(cls, values: list[str]) -> list[str]:
         cleaned: list[str] = []
+        seen: set[str] = set()
         for value in values:
             if not ISO_DATE_RE.match(value):
                 raise ValueError("Each date must be YYYY-MM-DD.")
             datetime.strptime(value, "%Y-%m-%d")
-            cleaned.append(value)
+            if value not in seen:
+                cleaned.append(value)
+                seen.add(value)
         return cleaned
+
+
+BULK_ZIP_MAX_FILES = 100
+ZIP_DOWNLOAD_WORKERS = 12
 
 
 class InviteBrokerRequest(BaseModel):
@@ -332,49 +340,82 @@ def zip_entry_name(client_code: str, trade_date_iso: str, status: str) -> str:
     return f"{client_code}_{trade_date_iso}.pdf"
 
 
+def _write_zip_entries(entries: list[tuple[str, bytes]]) -> bytes:
+    """Build a ZIP. PDFs are already compressed, so store without re-deflating."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_STORED) as archive:
+        for name, pdf_bytes in entries:
+            archive.writestr(name, pdf_bytes)
+    buffer.seek(0)
+    return buffer.read()
+
+
 def build_trade_slips_zip(broker_id: str, trade_date_iso: str, folder_prefix: str = "") -> bytes:
     records = list_slips(broker_id=broker_id, trade_date_iso=trade_date_iso)
     if not records:
         raise LookupError("No trade slips found for this date")
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+    jobs: list[tuple[str, str]] = []  # (zip_name, storage_path)
+    for row in records:
+        client_code = row["client_code"]
+        status = row["status"]
+        storage_path = slip_storage_path_from_row(row, trade_date_iso, broker_id)
+        name = zip_entry_name(client_code, trade_date_iso, status)
+        if folder_prefix:
+            name = f"{folder_prefix.rstrip('/')}/{name}"
+        jobs.append((name, storage_path))
+
+    downloaded = download_slip_bytes_many(
+        [path for _, path in jobs],
+        max_workers=ZIP_DOWNLOAD_WORKERS,
+    )
+    entries: list[tuple[str, bytes]] = []
+    for name, path in jobs:
+        pdf_bytes = downloaded.get(path)
+        if pdf_bytes is None:
+            continue
+        entries.append((name, pdf_bytes))
+    if not entries:
+        raise RuntimeError("Could not download any PDFs for this date.")
+    return _write_zip_entries(entries)
+
+
+def build_multi_day_zip(broker_id: str, dates: list[str]) -> bytes:
+    jobs: list[tuple[str, str]] = []  # (zip_name, storage_path)
+    for trade_date_iso in dates:
+        records = list_slips(broker_id=broker_id, trade_date_iso=trade_date_iso)
         for row in records:
             client_code = row["client_code"]
             status = row["status"]
             storage_path = slip_storage_path_from_row(row, trade_date_iso, broker_id)
-            pdf_bytes = download_slip_bytes(storage_path)
-            name = zip_entry_name(client_code, trade_date_iso, status)
-            if folder_prefix:
-                name = f"{folder_prefix.rstrip('/')}/{name}"
-            archive.writestr(name, pdf_bytes)
-
-    buffer.seek(0)
-    return buffer.read()
-
-
-def build_multi_day_zip(broker_id: str, dates: list[str]) -> bytes:
-    buffer = io.BytesIO()
-    wrote_any = False
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for trade_date_iso in dates:
-            records = list_slips(broker_id=broker_id, trade_date_iso=trade_date_iso)
-            if not records:
-                continue
-            for row in records:
-                client_code = row["client_code"]
-                status = row["status"]
-                storage_path = slip_storage_path_from_row(row, trade_date_iso, broker_id)
-                pdf_bytes = download_slip_bytes(storage_path)
-                archive.writestr(
+            jobs.append(
+                (
                     f"{trade_date_iso}/{zip_entry_name(client_code, trade_date_iso, status)}",
-                    pdf_bytes,
+                    storage_path,
                 )
-                wrote_any = True
-    if not wrote_any:
+            )
+
+    if not jobs:
         raise LookupError("No trade slips found for the selected dates")
-    buffer.seek(0)
-    return buffer.read()
+    if len(jobs) > BULK_ZIP_MAX_FILES:
+        raise ValueError(
+            f"Selected days include {len(jobs)} slips (max {BULK_ZIP_MAX_FILES}). "
+            "Select fewer days, or download one day at a time."
+        )
+
+    downloaded = download_slip_bytes_many(
+        [path for _, path in jobs],
+        max_workers=ZIP_DOWNLOAD_WORKERS,
+    )
+    entries: list[tuple[str, bytes]] = []
+    for name, path in jobs:
+        pdf_bytes = downloaded.get(path)
+        if pdf_bytes is None:
+            continue
+        entries.append((name, pdf_bytes))
+    if not entries:
+        raise RuntimeError("Could not download any PDFs for the selected dates.")
+    return _write_zip_entries(entries)
 
 
 def broker_to_json(row: dict) -> dict:
@@ -939,6 +980,8 @@ async def download_zip_bulk(
         zip_bytes = await asyncio.to_thread(build_multi_day_zip, broker.id, payload.dates)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to build multi-day ZIP")
         raise HTTPException(

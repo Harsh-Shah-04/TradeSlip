@@ -306,18 +306,56 @@ def resolve_storage_path(client_code: str, trade_date_iso: str, broker_id: str) 
     return storage_path_for(client_code, trade_date_iso, broker_id=broker_id)
 
 
-def download_slip_bytes(storage_path: str) -> bytes:
+def download_slip_bytes(storage_path: str, client: httpx.Client | None = None) -> bytes:
     encoded = "/".join(quote(part, safe="") for part in storage_path.lstrip("/").split("/"))
-    response = httpx.get(
-        f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{encoded}",
-        headers=_service_headers(),
-        timeout=HTTP_TIMEOUT,
-    )
+    url = f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{encoded}"
+    headers = _service_headers()
+    if client is not None:
+        response = client.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    else:
+        response = httpx.get(url, headers=headers, timeout=HTTP_TIMEOUT)
     if response.status_code != 200:
         raise RuntimeError(
             f"Download failed ({response.status_code}) for {storage_path!r}: {response.text[:300]}"
         )
     return response.content
+
+
+def download_slip_bytes_many(
+    storage_paths: list[str],
+    *,
+    max_workers: int = 12,
+) -> dict[str, bytes]:
+    """Download many storage objects concurrently. Returns path -> bytes."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    unique_paths = list(dict.fromkeys(storage_paths))
+    if not unique_paths:
+        return {}
+
+    results: dict[str, bytes] = {}
+    errors: dict[str, Exception] = {}
+    workers = max(1, min(max_workers, len(unique_paths)))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(download_slip_bytes, path): path for path in unique_paths}
+        for fut in as_completed(futures):
+            path = futures[fut]
+            try:
+                results[path] = fut.result()
+            except Exception as exc:  # noqa: BLE001 — collect per-file errors
+                errors[path] = exc
+
+    if errors and not results:
+        first = next(iter(errors.values()))
+        raise RuntimeError(f"All downloads failed: {first}") from first
+    if errors and len(errors) > max(1, len(unique_paths) // 4):
+        first_path, first_exc = next(iter(errors.items()))
+        raise RuntimeError(
+            f"Too many download failures ({len(errors)}/{len(unique_paths)}), "
+            f"e.g. {first_path}: {first_exc}"
+        ) from first_exc
+    return results
 
 
 def resolve_blank_template_path(preferred: Path | None = None) -> Path:
