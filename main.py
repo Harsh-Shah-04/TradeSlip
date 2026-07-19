@@ -38,6 +38,7 @@ from utils.auth import (
 )
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
 from utils.ipo.models import (
+    AllocationSet,
     ApplicantCreate,
     ApplicantUpdate,
     IpoMasterCreate,
@@ -64,6 +65,7 @@ from utils.ipo.clients import (
 )
 from utils.ipo.service import (
     archive_ipo,
+    clear_position_allocations,
     count_positions_for_ipo,
     create_ipo,
     create_position,
@@ -76,6 +78,7 @@ from utils.ipo.service import (
     list_category_labels as list_ipo_category_labels,
     list_ipos,
     list_positions,
+    set_position_allocations,
     update_ipo,
     update_position,
     update_sell,
@@ -1551,6 +1554,37 @@ async def ipo_delete_sell(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content={"deleted": True, "position": position})
+
+
+@app.put("/api/ipo/positions/{position_id}/allocations")
+async def ipo_set_allocations(
+    broker: BrokerAuth,
+    position_id: str,
+    payload: AllocationSet,
+) -> JSONResponse:
+    try:
+        position = await asyncio.to_thread(
+            set_position_allocations, broker.id, position_id, payload
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to set allocations")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=position)
+
+
+@app.delete("/api/ipo/positions/{position_id}/allocations")
+async def ipo_clear_allocations(broker: BrokerAuth, position_id: str) -> JSONResponse:
+    try:
+        position = await asyncio.to_thread(clear_position_allocations, broker.id, position_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=position)
 
 
 # Run locally: uvicorn main:app --reload

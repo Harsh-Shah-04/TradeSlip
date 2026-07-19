@@ -135,12 +135,11 @@ class ApplicantUpdate(BaseModel):
 
 
 class PositionCreate(BaseModel):
-    """Buy stage only — sell happens later via sell legs."""
+    """Buy stage — party + quantity only. Applicants allocated later."""
 
     ipo_id: str = Field(min_length=1)
     trade_date: str = Field(min_length=10, max_length=10)
     party_id: str = Field(min_length=1)
-    applicant_id: str = Field(min_length=1)
     category: str = Field(min_length=1, max_length=100)
     buy_app: float = Field(gt=0)
     buy_rate: float = Field(ge=0)
@@ -154,7 +153,6 @@ class PositionCreate(BaseModel):
 class PositionUpdate(BaseModel):
     trade_date: str | None = Field(default=None, min_length=10, max_length=10)
     party_id: str | None = None
-    applicant_id: str | None = None
     category: str | None = Field(default=None, min_length=1, max_length=100)
     buy_app: float | None = Field(default=None, gt=0)
     buy_rate: float | None = Field(default=None, ge=0)
@@ -166,7 +164,6 @@ class SellCreate(BaseModel):
     sell_app: float = Field(gt=0)
     sell_rate: float = Field(ge=0)
     sell_party: str = Field(min_length=1, max_length=200)
-    applicant_ids: list[str] = Field(min_length=1)
     dalal: float | None = None
     notes: str = Field(default="", max_length=1000)
 
@@ -175,24 +172,30 @@ class SellCreate(BaseModel):
     def strip_text(cls, value: str) -> str:
         return _strip(value)
 
-    @field_validator("applicant_ids")
-    @classmethod
-    def unique_ids(cls, value: list[str]) -> list[str]:
-        cleaned = [v.strip() for v in value if v and str(v).strip()]
-        if not cleaned:
-            raise ValueError("Select at least one applicant being sold.")
-        return list(dict.fromkeys(cleaned))
-
 
 class SellUpdate(BaseModel):
     sell_date: str | None = Field(default=None, min_length=10, max_length=10)
     sell_app: float | None = Field(default=None, gt=0)
     sell_rate: float | None = Field(default=None, ge=0)
     sell_party: str | None = Field(default=None, min_length=1, max_length=200)
-    applicant_ids: list[str] | None = None
     dalal: float | None = None
     clear_dalal: bool = False
     notes: str | None = Field(default=None, max_length=1000)
+
+
+class AllocationSet(BaseModel):
+    """Replace all applicants allocated to a buy position."""
+
+    applicant_ids: list[str] = Field(min_length=1)
+
+    @field_validator("applicant_ids")
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in value if v and str(v).strip()]
+        if not cleaned:
+            raise ValueError("Select at least one applicant.")
+        return list(dict.fromkeys(cleaned))
+
 
 
 def _iso(value: Any) -> Any:
@@ -261,9 +264,7 @@ def applicant_to_json(
     }
 
 
-def sell_to_json(
-    row: dict[str, Any], *, applicants: list[dict[str, Any]] | None = None
-) -> dict[str, Any]:
+def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -273,8 +274,6 @@ def sell_to_json(
         "sell_rate": float(row.get("sell_rate") or 0),
         "sell_amt": float(row.get("sell_amt") or 0),
         "sell_party": row.get("sell_party"),
-        "applicants": applicants or [],
-        "applicant_ids": [a["id"] for a in (applicants or [])],
         "dalal": None if row.get("dalal") is None else float(row.get("dalal")),
         "notes": row.get("notes") or "",
         "created_at": _iso(row.get("created_at")),
@@ -290,15 +289,29 @@ def compute_position_status(buy_app: float, sold_app: float) -> str:
     return "Closed"
 
 
+def compute_allocation_status(buy_app: float, allocated_count: int) -> str:
+    required = int(round(buy_app))
+    if abs(buy_app - required) > 1e-9:
+        # Non-integer BUY APP — treat as unallocated until corrected
+        return "Unallocated" if allocated_count == 0 else "Partial"
+    if allocated_count <= 0:
+        return "Unallocated"
+    if allocated_count == required:
+        return "Fully Allocated"
+    return "Partial"
+
+
 def position_to_json(
     row: dict[str, Any],
     *,
     sold_app: float = 0.0,
     sells: list[dict[str, Any]] | None = None,
     ipo: dict[str, Any] | None = None,
+    allocations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     buy_app = float(row.get("buy_app") or 0)
     remaining = max(buy_app - sold_app, 0.0)
+    allocs = allocations or []
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -309,7 +322,6 @@ def position_to_json(
         "party": row.get("party"),
         "category": row.get("category"),
         "category_group": row.get("category_group"),
-        "applicant_id": str(row.get("applicant_id") or "") or None,
         "applicant_name": row.get("applicant_name") or "",
         "buy_app": buy_app,
         "buy_rate": float(row.get("buy_rate") or 0),
@@ -317,6 +329,9 @@ def position_to_json(
         "sold_app": sold_app,
         "remaining_app": remaining,
         "status": compute_position_status(buy_app, sold_app),
+        "allocations": allocs,
+        "allocated_count": len(allocs),
+        "allocation_status": compute_allocation_status(buy_app, len(allocs)),
         "sells": sells or [],
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),

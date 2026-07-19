@@ -398,6 +398,12 @@ def count_links_for_applicant(applicant_id: str) -> int:
         params={"select": "id", "applicant_id": f"eq.{applicant_id}", "limit": "1"},
         timeout=HTTP_TIMEOUT,
     )
+    alloc = httpx.get(
+        f"{_supabase_url()}/rest/v1/ipo_position_allocations",
+        headers={**_service_headers(), "Prefer": "count=exact"},
+        params={"select": "position_id", "applicant_id": f"eq.{applicant_id}", "limit": "1"},
+        timeout=HTTP_TIMEOUT,
+    )
     sell = httpx.get(
         f"{_supabase_url()}/rest/v1/{SELL_APPLICANTS_TABLE}",
         headers={**_service_headers(), "Prefer": "count=exact"},
@@ -405,7 +411,7 @@ def count_links_for_applicant(applicant_id: str) -> int:
         timeout=HTTP_TIMEOUT,
     )
     total = 0
-    for response in (pos, sell):
+    for response in (pos, alloc, sell):
         if response.status_code not in (200, 206):
             continue
         content_range = response.headers.get("content-range") or "*/0"

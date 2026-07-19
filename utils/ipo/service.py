@@ -7,8 +7,9 @@ from typing import Any
 import httpx
 
 from utils.ipo.categories import category_group_for
-from utils.ipo.clients import get_applicant
+from utils.ipo.clients import get_applicant, get_party
 from utils.ipo.models import (
+    AllocationSet,
     IpoMasterCreate,
     IpoMasterUpdate,
     PositionCreate,
@@ -25,7 +26,7 @@ from utils.supabase_client import _service_headers, _supabase_url
 MASTER_TABLE = "ipo_master"
 POSITIONS_TABLE = "ipo_positions"
 SELLS_TABLE = "ipo_sells"
-SELL_APPLICANTS_TABLE = "ipo_sell_applicants"
+ALLOCATIONS_TABLE = "ipo_position_allocations"
 APPLICANTS_TABLE = "ipo_applicants"
 LABELS_TABLE = "ipo_category_labels"
 HTTP_TIMEOUT = 30.0
@@ -227,34 +228,36 @@ def archive_ipo(ipo_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _list_sell_applicant_map(sell_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-    if not sell_ids:
+def _list_allocations_for_positions(
+    position_ids: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    if not position_ids:
         return {}
-    by_sell: dict[str, list[dict[str, Any]]] = {sid: [] for sid in sell_ids}
-    applicant_ids: set[str] = set()
+    by_pos: dict[str, list[dict[str, Any]]] = {pid: [] for pid in position_ids}
     links: list[tuple[str, str]] = []
-    for i in range(0, len(sell_ids), 50):
-        chunk = sell_ids[i : i + 50]
+    applicant_ids: set[str] = set()
+    for i in range(0, len(position_ids), 50):
+        chunk = position_ids[i : i + 50]
         response = httpx.get(
-            f"{_supabase_url()}/rest/v1/{SELL_APPLICANTS_TABLE}",
+            f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
             headers=_service_headers(),
             params={
-                "select": "sell_id,applicant_id",
-                "sell_id": f"in.({','.join(chunk)})",
+                "select": "position_id,applicant_id",
+                "position_id": f"in.({','.join(chunk)})",
                 "limit": "5000",
             },
             timeout=HTTP_TIMEOUT,
         )
         if response.status_code != 200:
             raise RuntimeError(
-                f"List sell applicants failed ({response.status_code}): {response.text[:300]}"
+                f"List allocations failed ({response.status_code}): {response.text[:300]}"
             )
         data = response.json()
         for row in data if isinstance(data, list) else []:
-            sid = str(row.get("sell_id") or "")
+            pid = str(row.get("position_id") or "")
             aid = str(row.get("applicant_id") or "")
-            if sid and aid:
-                links.append((sid, aid))
+            if pid and aid:
+                links.append((pid, aid))
                 applicant_ids.add(aid)
 
     applicants: dict[str, dict[str, Any]] = {}
@@ -275,63 +278,19 @@ def _list_sell_applicant_map(sell_ids: list[str]) -> dict[str, list[dict[str, An
         for row in data if isinstance(data, list) else []:
             applicants[str(row["id"])] = applicant_to_json(row)
 
-    for sid, aid in links:
+    for pid, aid in links:
         app = applicants.get(aid)
         if app:
-            by_sell.setdefault(sid, []).append(app)
-    for sid in by_sell:
-        by_sell[sid].sort(key=lambda a: (a.get("name") or "").upper())
-    return by_sell
-
-
-def _set_sell_applicants(sell_id: str, applicant_ids: list[str]) -> None:
-    # Replace links
-    httpx.delete(
-        f"{_supabase_url()}/rest/v1/{SELL_APPLICANTS_TABLE}",
-        headers=_service_headers({"Prefer": "return=minimal"}),
-        params={"sell_id": f"eq.{sell_id}"},
-        timeout=HTTP_TIMEOUT,
-    )
-    if not applicant_ids:
-        return
-    rows = [{"sell_id": sell_id, "applicant_id": aid} for aid in applicant_ids]
-    response = httpx.post(
-        f"{_supabase_url()}/rest/v1/{SELL_APPLICANTS_TABLE}",
-        headers=_service_headers(
-            {"Content-Type": "application/json", "Prefer": "return=minimal"}
-        ),
-        json=rows,
-        timeout=HTTP_TIMEOUT,
-    )
-    if response.status_code not in (200, 201):
-        raise RuntimeError(
-            f"Link sell applicants failed ({response.status_code}): {response.text[:300]}"
-        )
-
-
-def _validate_sell_applicants(position: dict[str, Any], applicant_ids: list[str]) -> list[dict[str, Any]]:
-    if not applicant_ids:
-        raise ValueError("Select at least one applicant being sold.")
-    party_id = position.get("party_id")
-    validated: list[dict[str, Any]] = []
-    for aid in applicant_ids:
-        app = get_applicant(aid)
-        if app.get("is_archived") or app.get("status") != "Active":
-            raise ValueError(f"Applicant '{app.get('name')}' is not Active.")
-        if party_id and app.get("party_id") != party_id:
-            raise ValueError(
-                f"Applicant '{app.get('name')}' does not belong to party '{position.get('party')}'."
-            )
-        validated.append(app)
-    return validated
+            by_pos.setdefault(pid, []).append(app)
+    for pid in by_pos:
+        by_pos[pid].sort(key=lambda a: (a.get("name") or "").upper())
+    return by_pos
 
 
 def _list_sells_for_positions(broker_id: str, position_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
     if not position_ids:
         return {}
-    # PostgREST in filter — chunk if needed
     by_pos: dict[str, list[dict[str, Any]]] = {pid: [] for pid in position_ids}
-    sell_rows: list[dict[str, Any]] = []
     chunk_size = 50
     for i in range(0, len(position_ids), chunk_size):
         chunk = position_ids[i : i + chunk_size]
@@ -352,15 +311,8 @@ def _list_sells_for_positions(broker_id: str, position_ids: list[str]) -> dict[s
             raise RuntimeError(f"List sells failed ({response.status_code}): {response.text[:300]}")
         data = response.json()
         for row in data if isinstance(data, list) else []:
-            sell_rows.append(row)
-
-    apps_by_sell = _list_sell_applicant_map([str(r["id"]) for r in sell_rows])
-    for row in sell_rows:
-        pid = str(row.get("position_id") or "")
-        sid = str(row.get("id") or "")
-        by_pos.setdefault(pid, []).append(
-            sell_to_json(row, applicants=apps_by_sell.get(sid, []))
-        )
+            pid = str(row.get("position_id") or "")
+            by_pos.setdefault(pid, []).append(sell_to_json(row))
     return by_pos
 
 
@@ -425,6 +377,7 @@ def list_positions(
 
     position_ids = [str(r["id"]) for r in rows]
     sells_by_pos = _list_sells_for_positions(broker_id, position_ids)
+    allocs_by_pos = _list_allocations_for_positions(position_ids)
     ipos = _ipo_map([str(r["ipo_id"]) for r in rows])
 
     result: list[dict[str, Any]] = []
@@ -437,6 +390,7 @@ def list_positions(
             sold_app=sold_app,
             sells=sells,
             ipo=ipos.get(str(row["ipo_id"])),
+            allocations=allocs_by_pos.get(pid, []),
         )
         if status and payload["status"] != status:
             continue
@@ -465,7 +419,10 @@ def get_position(broker_id: str, position_id: str) -> dict[str, Any]:
     sells = _list_sells_for_positions(broker_id, [position_id]).get(position_id, [])
     sold_app = sum(s["sell_app"] for s in sells)
     ipo = _ipo_map([str(row["ipo_id"])]).get(str(row["ipo_id"]))
-    return position_to_json(row, sold_app=sold_app, sells=sells, ipo=ipo)
+    allocations = _list_allocations_for_positions([position_id]).get(position_id, [])
+    return position_to_json(
+        row, sold_app=sold_app, sells=sells, ipo=ipo, allocations=allocations
+    )
 
 
 def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
@@ -475,21 +432,15 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     if ipo.get("status") != "Active":
         raise ValueError("Select an Active IPO. This IPO is not currently Active.")
 
-    applicant = get_applicant(payload.applicant_id)
-    if applicant.get("party_id") != payload.party_id:
-        raise ValueError("Selected applicant does not belong to the selected party.")
-    if applicant.get("is_archived") or applicant.get("status") != "Active":
-        raise ValueError("Selected applicant is not Active.")
-    party = applicant.get("party") or {}
+    party = get_party(payload.party_id)
+    if party.get("is_archived") or party.get("status") != "Active":
+        raise ValueError("Selected party is not Active.")
     party_name = party.get("name") or ""
-    if not party_name:
-        raise ValueError("Party not found for applicant.")
 
     buy_amt = (_money(payload.buy_app) * _money(payload.buy_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
     category = payload.category.strip()
-    # Prefer applicant's default category when form category empty — form requires category
     row = {
         "broker_id": broker_id,
         "ipo_id": payload.ipo_id,
@@ -498,8 +449,8 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "party": party_name,
         "category": category,
         "category_group": category_group_for(category),
-        "applicant_id": payload.applicant_id,
-        "applicant_name": applicant.get("name") or "",
+        "applicant_id": None,
+        "applicant_name": "",
         "buy_app": float(_money(payload.buy_app)),
         "buy_rate": float(_money(payload.buy_rate)),
         "buy_amt": float(buy_amt),
@@ -527,6 +478,15 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         raise ValueError(
             f"BUY APP cannot be less than already sold quantity ({existing['sold_app']})."
         )
+    allocated = existing.get("allocated_count") or 0
+    if allocated > 0 and abs(buy_app - existing["buy_app"]) > 1e-9:
+        required = int(round(buy_app))
+        if abs(buy_app - required) > 1e-9 or allocated != required:
+            raise ValueError(
+                f"This position has {allocated} allocated applicant(s). "
+                f"Clear or re-allocate applicants before changing BUY APP to {buy_app}."
+            )
+
     ipo_id = payload.ipo_id or existing["ipo_id"]
     if payload.ipo_id:
         ipo = get_ipo(payload.ipo_id)
@@ -541,20 +501,16 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
 
     party_id = existing.get("party_id")
     party_name = existing["party"]
-    applicant_id = existing.get("applicant_id")
-    applicant_name = existing["applicant_name"]
-    if payload.applicant_id is not None or payload.party_id is not None:
-        aid = payload.applicant_id or existing.get("applicant_id")
-        pid = payload.party_id or existing.get("party_id")
-        if not aid or not pid:
-            raise ValueError("party_id and applicant_id are required when updating client links.")
-        applicant = get_applicant(aid)
-        if applicant.get("party_id") != pid:
-            raise ValueError("Selected applicant does not belong to the selected party.")
-        party_id = pid
-        party_name = (applicant.get("party") or {}).get("name") or party_name
-        applicant_id = aid
-        applicant_name = applicant.get("name") or applicant_name
+    if payload.party_id is not None:
+        party = get_party(payload.party_id)
+        if party.get("is_archived") or party.get("status") != "Active":
+            raise ValueError("Selected party is not Active.")
+        if existing.get("allocated_count") and payload.party_id != existing.get("party_id"):
+            raise ValueError(
+                "Clear applicant allocation before changing the buy party."
+            )
+        party_id = payload.party_id
+        party_name = party.get("name") or party_name
 
     patch = {
         "ipo_id": ipo_id,
@@ -563,8 +519,6 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         "party": party_name,
         "category": category,
         "category_group": category_group_for(category),
-        "applicant_id": applicant_id,
-        "applicant_name": applicant_name,
         "buy_app": float(_money(buy_app)),
         "buy_rate": float(_money(buy_rate)),
         "buy_amt": float(buy_amt),
@@ -603,7 +557,6 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         raise ValueError(
             f"Cannot sell {payload.sell_app}: only {remaining} applications remaining on this position."
         )
-    applicants = _validate_sell_applicants(position, payload.applicant_ids)
     sell_amt = (_money(payload.sell_app) * _money(payload.sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
@@ -631,11 +584,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         raise RuntimeError(f"Create sell failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     created = data[0] if isinstance(data, list) and data else data
-    sell_id = str(created["id"])
-    _set_sell_applicants(sell_id, [a["id"] for a in applicants])
-    position_out = get_position(broker_id, position_id)
-    sell_out = next((s for s in position_out["sells"] if s["id"] == sell_id), None)
-    return {"sell": sell_out or sell_to_json(created, applicants=applicants), "position": position_out}
+    return {"sell": sell_to_json(created), "position": get_position(broker_id, position_id)}
 
 
 def update_sell(
@@ -662,9 +611,6 @@ def update_sell(
         dalal = float(_money(payload.dalal))
     else:
         dalal = existing_sell["dalal"]
-
-    if payload.applicant_ids is not None:
-        _validate_sell_applicants(position, payload.applicant_ids)
 
     patch = {
         "sell_date": payload.sell_date or existing_sell["sell_date"],
@@ -695,8 +641,6 @@ def update_sell(
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Update sell failed ({response.status_code}): {response.text[:300]}")
-    if payload.applicant_ids is not None:
-        _set_sell_applicants(sell_id, payload.applicant_ids)
     return {"position": get_position(broker_id, position_id)}
 
 
@@ -716,4 +660,98 @@ def delete_sell(broker_id: str, position_id: str, sell_id: str) -> dict[str, Any
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Delete sell failed ({response.status_code}): {response.text[:300]}")
+    return get_position(broker_id, position_id)
+
+
+def set_position_allocations(
+    broker_id: str, position_id: str, payload: AllocationSet
+) -> dict[str, Any]:
+    """
+    Allocate applicants from the buy party onto a position.
+    Count must exactly equal BUY APP (whole number) to mark Fully Allocated.
+    """
+    position = get_position(broker_id, position_id)
+    buy_app = float(position["buy_app"])
+    required = int(round(buy_app))
+    if abs(buy_app - required) > 1e-9:
+        raise ValueError(
+            f"BUY APP must be a whole number to allocate applicants (currently {buy_app})."
+        )
+    if len(payload.applicant_ids) != required:
+        raise ValueError(
+            f"Select exactly {required} applicant(s) to match BUY APP ({required}). "
+            f"You selected {len(payload.applicant_ids)}."
+        )
+
+    party_id = position.get("party_id")
+    if not party_id:
+        raise ValueError("This position has no Client Master party. Edit the buy party first.")
+
+    validated: list[dict[str, Any]] = []
+    for aid in payload.applicant_ids:
+        app = get_applicant(aid)
+        if app.get("is_archived") or app.get("status") != "Active":
+            raise ValueError(f"Applicant '{app.get('name')}' is not Active.")
+        if app.get("party_id") != party_id:
+            raise ValueError(
+                f"Applicant '{app.get('name')}' does not belong to buy party '{position.get('party')}'."
+            )
+        validated.append(app)
+
+    # Replace allocation set
+    httpx.delete(
+        f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
+        headers=_service_headers({"Prefer": "return=minimal"}),
+        params={"position_id": f"eq.{position_id}"},
+        timeout=HTTP_TIMEOUT,
+    )
+    rows = [{"position_id": position_id, "applicant_id": a["id"]} for a in validated]
+    response = httpx.post(
+        f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
+        headers=_service_headers(
+            {"Content-Type": "application/json", "Prefer": "return=minimal"}
+        ),
+        json=rows,
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Save allocations failed ({response.status_code}): {response.text[:300]}"
+        )
+
+    # Denormalize names onto position for quick display
+    names = ", ".join(a.get("name") or "" for a in validated)
+    httpx.patch(
+        f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+        headers=_service_headers(
+            {"Content-Type": "application/json", "Prefer": "return=minimal"}
+        ),
+        params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+        json={"applicant_name": names, "applicant_id": None, "updated_at": _now()},
+        timeout=HTTP_TIMEOUT,
+    )
+    return get_position(broker_id, position_id)
+
+
+def clear_position_allocations(broker_id: str, position_id: str) -> dict[str, Any]:
+    get_position(broker_id, position_id)
+    response = httpx.delete(
+        f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
+        headers=_service_headers({"Prefer": "return=minimal"}),
+        params={"position_id": f"eq.{position_id}"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Clear allocations failed ({response.status_code}): {response.text[:300]}"
+        )
+    httpx.patch(
+        f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+        headers=_service_headers(
+            {"Content-Type": "application/json", "Prefer": "return=minimal"}
+        ),
+        params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+        json={"applicant_name": "", "applicant_id": None, "updated_at": _now()},
+        timeout=HTTP_TIMEOUT,
+    )
     return get_position(broker_id, position_id)
