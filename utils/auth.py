@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -18,9 +19,57 @@ REFRESH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_ATTEMPTS = 8
 HTTP_TIMEOUT = 20.0
+# Token → BrokerSession cache. Every authenticated request otherwise costs two
+# Supabase round-trips (/auth/v1/user + brokers row) before its real query.
+# Deactivation / role changes take up to this long to bind on warm instances.
+SESSION_CACHE_TTL_SECONDS = 60.0
+_SESSION_CACHE_MAX = 512
 
 logger = logging.getLogger(__name__)
 _failed_logins: dict[str, deque[float]] = defaultdict(deque)
+_session_cache: dict[str, tuple[float, BrokerSession]] = {}
+_http_client: httpx.Client | None = None
+
+
+def _http() -> httpx.Client:
+    """Reuse one client so warm serverless instances skip repeated TLS handshakes."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+    return _http_client
+
+
+def _token_key(access_token: str) -> str:
+    return hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+
+
+def _cached_broker(access_token: str | None) -> BrokerSession | None:
+    if not access_token:
+        return None
+    entry = _session_cache.get(_token_key(access_token))
+    if entry is None:
+        return None
+    expires_at, session = entry
+    if time.time() >= expires_at:
+        _session_cache.pop(_token_key(access_token), None)
+        return None
+    return session
+
+
+def _cache_broker(access_token: str, session: BrokerSession) -> None:
+    now = time.time()
+    if len(_session_cache) >= _SESSION_CACHE_MAX:
+        expired = [k for k, (exp, _) in _session_cache.items() if exp <= now]
+        for key in expired:
+            _session_cache.pop(key, None)
+        if len(_session_cache) >= _SESSION_CACHE_MAX:
+            _session_cache.clear()
+    _session_cache[_token_key(access_token)] = (now + SESSION_CACHE_TTL_SECONDS, session)
+
+
+def _evict_cached_broker(access_token: str | None) -> None:
+    if access_token:
+        _session_cache.pop(_token_key(access_token), None)
 
 
 @dataclass(frozen=True)
@@ -167,7 +216,7 @@ def sign_in_with_password(email: str, password: str) -> tuple[str, str, int, Bro
     normalized_email = email.strip().lower()
     url = f"{_supabase_url()}/auth/v1/token?grant_type=password"
     try:
-        response = httpx.post(
+        response = _http().post(
             url,
             headers=_auth_headers(),
             json={"email": normalized_email, "password": password},
@@ -222,7 +271,7 @@ def get_user_from_access_token(access_token: str) -> dict[str, Any] | None:
     if not access_token:
         return None
     try:
-        response = httpx.get(
+        response = _http().get(
             f"{_supabase_url()}/auth/v1/user",
             headers=_auth_headers(access_token),
             timeout=HTTP_TIMEOUT,
@@ -239,7 +288,7 @@ def refresh_session_tokens(refresh_token: str) -> tuple[str, str, int] | None:
     if not refresh_token:
         return None
     try:
-        response = httpx.post(
+        response = _http().post(
             f"{_supabase_url()}/auth/v1/token?grant_type=refresh_token",
             headers=_auth_headers(),
             json={"refresh_token": refresh_token},
@@ -263,6 +312,10 @@ def resolve_authenticated_broker(
     refresh_token: str | None,
     response: Response | None = None,
 ) -> BrokerSession | None:
+    cached = _cached_broker(access_token)
+    if cached is not None:
+        return cached
+
     user = get_user_from_access_token(access_token or "")
     if user is None:
         refreshed = refresh_session_tokens(refresh_token or "")
@@ -277,12 +330,15 @@ def resolve_authenticated_broker(
         access_token = new_access
 
     try:
-        return resolve_broker_for_auth_user(user)
+        broker = resolve_broker_for_auth_user(user)
     except PermissionError:
         return None
     except Exception:
         logger.exception("Failed to resolve broker for authenticated user")
         return None
+    if access_token:
+        _cache_broker(access_token, broker)
+    return broker
 
 
 # Back-compat alias used by older call sites during refactor
@@ -342,10 +398,11 @@ def clear_auth_cookies(response: Response) -> None:
 
 
 def sign_out_supabase(access_token: str | None, refresh_token: str | None) -> None:
+    _evict_cached_broker(access_token)
     if not access_token:
         return
     try:
-        httpx.post(
+        _http().post(
             f"{_supabase_url()}/auth/v1/logout",
             headers=_auth_headers(access_token),
             timeout=HTTP_TIMEOUT,
