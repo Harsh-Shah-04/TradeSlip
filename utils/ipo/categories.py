@@ -142,10 +142,10 @@ def category_group_for(label: str) -> str | None:
 SUB_CATEGORY_AMOUNT_FIELD: dict[str, str] = {
     "10+": "amount_bhni",
     "2+": "amount_shni",
-    "15K": "amount_retail",
-    "2-": "amount_retail",
-    "15K Shareholder": "amount_shareholder",
-    "2- Shareholder": "amount_shareholder",
+    "15K": "amount_retail_15k",
+    "2-": "amount_retail_2minus",
+    "15K Shareholder": "amount_shareholder_15k",
+    "2- Shareholder": "amount_shareholder_2minus",
 }
 
 

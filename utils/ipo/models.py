@@ -19,8 +19,10 @@ class IpoMasterCreate(BaseModel):
     notes: str = Field(default="", max_length=2000)
     amount_bhni: float | None = Field(default=None, ge=0)
     amount_shni: float | None = Field(default=None, ge=0)
-    amount_retail: float | None = Field(default=None, ge=0)
-    amount_shareholder: float | None = Field(default=None, ge=0)
+    amount_retail_15k: float | None = Field(default=None, ge=0)
+    amount_retail_2minus: float | None = Field(default=None, ge=0)
+    amount_shareholder_15k: float | None = Field(default=None, ge=0)
+    amount_shareholder_2minus: float | None = Field(default=None, ge=0)
 
     @field_validator("status")
     @classmethod
@@ -45,12 +47,16 @@ class IpoMasterUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     amount_bhni: float | None = Field(default=None, ge=0)
     amount_shni: float | None = Field(default=None, ge=0)
-    amount_retail: float | None = Field(default=None, ge=0)
-    amount_shareholder: float | None = Field(default=None, ge=0)
+    amount_retail_15k: float | None = Field(default=None, ge=0)
+    amount_retail_2minus: float | None = Field(default=None, ge=0)
+    amount_shareholder_15k: float | None = Field(default=None, ge=0)
+    amount_shareholder_2minus: float | None = Field(default=None, ge=0)
     clear_amount_bhni: bool = False
     clear_amount_shni: bool = False
-    clear_amount_retail: bool = False
-    clear_amount_shareholder: bool = False
+    clear_amount_retail_15k: bool = False
+    clear_amount_retail_2minus: bool = False
+    clear_amount_shareholder_15k: bool = False
+    clear_amount_shareholder_2minus: bool = False
     is_archived: bool | None = None
 
     @field_validator("status")
@@ -82,6 +88,40 @@ class PartyCreate(BaseModel):
 
 
 class PartyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+    is_archived: bool | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+
+class SellPartyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    notes: str = Field(default="", max_length=2000)
+    status: str = Field(default="Active")
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+    @field_validator("name", "notes")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return _strip(value)
+
+
+class SellPartyUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     notes: str | None = Field(default=None, max_length=2000)
     status: str | None = None
@@ -285,8 +325,10 @@ def master_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> di
         "notes": row.get("notes") or "",
         "amount_bhni": _optional_float(row.get("amount_bhni")),
         "amount_shni": _optional_float(row.get("amount_shni")),
-        "amount_retail": _optional_float(row.get("amount_retail")),
-        "amount_shareholder": _optional_float(row.get("amount_shareholder")),
+        "amount_retail_15k": _optional_float(row.get("amount_retail_15k")),
+        "amount_retail_2minus": _optional_float(row.get("amount_retail_2minus")),
+        "amount_shareholder_15k": _optional_float(row.get("amount_shareholder_15k")),
+        "amount_shareholder_2minus": _optional_float(row.get("amount_shareholder_2minus")),
         "is_archived": bool(row.get("is_archived", False)),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
@@ -308,6 +350,21 @@ def party_to_json(row: dict[str, Any], *, applicant_count: int | None = None) ->
     }
     if applicant_count is not None:
         payload["applicant_count"] = applicant_count
+    return payload
+
+
+def sell_party_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> dict[str, Any]:
+    payload = {
+        "id": str(row.get("id") or ""),
+        "name": row.get("name"),
+        "notes": row.get("notes") or "",
+        "status": row.get("status") or "Active",
+        "is_archived": bool(row.get("is_archived", False)),
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+    if trade_count is not None:
+        payload["trade_count"] = trade_count
     return payload
 
 

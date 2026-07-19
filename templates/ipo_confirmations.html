@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Confirmations · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1400px] mx-auto px-4 py-8{% endblock %}
+{% block content %}
+<header class="mb-6">
+  <h1 class="text-3xl font-bold text-slate-900">Confirmations</h1>
+  <p class="text-slate-600 mt-1">Trades are consolidated by buy party and sell party. One Excel includes all matching allocated trades (IPO Application + Subject 2). Each file shows only that party’s rate.</p>
+</header>
+
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+  <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterIpo">IPO</label>
+      <select id="filterIpo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterBuyParty">Buy Party</label>
+      <select id="filterBuyParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSellParty">Sell Party</label>
+      <select id="filterSellParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All sell parties</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterFrom">From</label>
+      <input type="date" id="filterFrom" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterTo">To</label>
+      <input type="date" id="filterTo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterCategory">Category</label>
+      <select id="filterCategory" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All</option>
+        <option value="IPO Application">IPO Application</option>
+        <option value="Subject 2">Subject 2</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSubCategory">Sub-Category</label>
+      <select id="filterSubCategory" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All</option>
+      </select>
+    </div>
+    <div class="flex items-end gap-2 md:col-span-2">
+      <button type="button" id="applyFilters" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Apply</button>
+      <button type="button" id="clearFilters" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">Clear</button>
+    </div>
+  </div>
+</section>
+
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+  <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+      <h2 class="font-semibold">Client confirmations (Buy Party)</h2>
+      <p id="buyStatus" class="text-sm text-slate-500"></p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+          <tr>
+            <th class="px-3 py-2">Buy Party</th>
+            <th class="px-3 py-2">IPO / Categories</th>
+            <th class="px-3 py-2 text-right">Trades</th>
+            <th class="px-3 py-2 text-right">Apps</th>
+            <th class="px-3 py-2 text-right">Export</th>
+          </tr>
+        </thead>
+        <tbody id="buyBody" class="divide-y divide-slate-100">
+          <tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+      <h2 class="font-semibold">Broker confirmations (Sell Party)</h2>
+      <p id="sellStatus" class="text-sm text-slate-500"></p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+          <tr>
+            <th class="px-3 py-2">Sell Party</th>
+            <th class="px-3 py-2">IPO / Buy parties</th>
+            <th class="px-3 py-2 text-right">Trades</th>
+            <th class="px-3 py-2 text-right">Apps</th>
+            <th class="px-3 py-2 text-right">Export</th>
+          </tr>
+        </thead>
+        <tbody id="sellBody" class="divide-y divide-slate-100">
+          <tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const fmt = (n) => Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 4 });
+  let tradeCategoryMeta = null;
+
+  function setSubCategoryOptions() {
+    const cat = document.getElementById("filterCategory").value;
+    const sub = document.getElementById("filterSubCategory");
+    const prev = sub.value;
+    const subs = cat && tradeCategoryMeta && tradeCategoryMeta.sub_categories
+      ? (tradeCategoryMeta.sub_categories[cat] || [])
+      : (tradeCategoryMeta && tradeCategoryMeta.sub_categories
+        ? [...new Set([].concat(
+            tradeCategoryMeta.sub_categories["IPO Application"] || [],
+            tradeCategoryMeta.sub_categories["Subject 2"] || []
+          ))]
+        : []);
+    sub.innerHTML = '<option value="">All</option>' + subs.map((s) =>
+      `<option value="${TradeSlip.escapeHtml(s)}">${TradeSlip.escapeHtml(s)}</option>`
+    ).join("");
+    if (prev && [...sub.options].some((o) => o.value === prev)) sub.value = prev;
+  }
+
+  async function loadMeta() {
+    const [ipoRes, partyRes, catRes, sellRes] = await Promise.all([
+      TradeSlip.apiFetch("/api/ipo/master?include_archived=true"),
+      TradeSlip.apiFetch("/api/ipo/parties"),
+      TradeSlip.apiFetch("/api/ipo/trade-categories"),
+      TradeSlip.apiFetch("/api/ipo/sell-parties?status=Active"),
+    ]);
+    const ipos = (await ipoRes.json().catch(() => ({}))).ipos || [];
+    const parties = (await partyRes.json().catch(() => ({}))).parties || [];
+    tradeCategoryMeta = await catRes.json().catch(() => ({}));
+    const sellParties = (await sellRes.json().catch(() => ({}))).sell_parties || [];
+
+    document.getElementById("filterIpo").innerHTML =
+      '<option value="">All IPOs</option>' +
+      ipos.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("");
+
+    document.getElementById("filterBuyParty").innerHTML =
+      '<option value="">All parties</option>' +
+      parties.map((p) => `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}</option>`).join("");
+
+    document.getElementById("filterSellParty").innerHTML =
+      '<option value="">All sell parties</option>' +
+      sellParties.map((p) => `<option value="${TradeSlip.escapeHtml(p.name)}">${TradeSlip.escapeHtml(p.name)}</option>`).join("");
+
+    setSubCategoryOptions();
+  }
+
+  function queryParams() {
+    const params = new URLSearchParams();
+    const ipo = document.getElementById("filterIpo").value;
+    const party = document.getElementById("filterBuyParty").value;
+    const sell = document.getElementById("filterSellParty").value.trim();
+    const from = document.getElementById("filterFrom").value;
+    const to = document.getElementById("filterTo").value;
+    const cat = document.getElementById("filterCategory").value;
+    const sub = document.getElementById("filterSubCategory").value;
+    if (ipo) params.set("ipo_id", ipo);
+    if (party) params.set("party_id", party);
+    if (sell) params.set("sell_party", sell);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (cat) params.set("category", cat);
+    if (sub) params.set("sub_category", sub);
+    return params;
+  }
+
+  function joinList(items, empty = "—") {
+    if (!items || !items.length) return empty;
+    return TradeSlip.escapeHtml(items.join(", "));
+  }
+
+  async function loadGroups() {
+    const buyBody = document.getElementById("buyBody");
+    const sellBody = document.getElementById("sellBody");
+    document.getElementById("buyStatus").textContent = "Loading…";
+    document.getElementById("sellStatus").textContent = "Loading…";
+    buyBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>';
+    sellBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>';
+
+    const response = await TradeSlip.apiFetch(`/api/ipo/confirmations?${queryParams().toString()}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const err = TradeSlip.escapeHtml(TradeSlip.parseErrorDetail(payload));
+      buyBody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-red-600">${err}</td></tr>`;
+      sellBody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-red-600">${err}</td></tr>`;
+      document.getElementById("buyStatus").textContent = "";
+      document.getElementById("sellStatus").textContent = "";
+      return;
+    }
+
+    const buyParties = payload.buy_parties || [];
+    const sellParties = payload.sell_parties || [];
+
+    if (!buyParties.length) {
+      buyBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No buy parties with fully allocated trades.</td></tr>';
+    } else {
+      buyBody.innerHTML = buyParties.map((g) => {
+        const detail = `${joinList(g.ipo_names)}<div class="text-xs text-slate-500 mt-0.5">${joinList(g.categories)} · ${joinList(g.sub_categories)}</div>`;
+        return `<tr class="hover:bg-slate-50">
+          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(g.party || "—")}</td>
+          <td class="px-3 py-2">${detail}</td>
+          <td class="px-3 py-2 text-right">${fmt(g.trade_count)}</td>
+          <td class="px-3 py-2 text-right">${fmt(g.applicant_count)}</td>
+          <td class="px-3 py-2 text-right">
+            <button type="button" class="dl-client rounded border border-emerald-200 bg-emerald-50 text-emerald-800 px-2 py-1 text-xs font-semibold" data-party-id="${TradeSlip.escapeHtml(g.party_id || "")}">Client Excel</button>
+          </td>
+        </tr>`;
+      }).join("");
+    }
+
+    if (!sellParties.length) {
+      sellBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No sell parties on fully allocated trades.</td></tr>';
+    } else {
+      sellBody.innerHTML = sellParties.map((g) => {
+        const detail = `${joinList(g.ipo_names)}<div class="text-xs text-slate-500 mt-0.5">From: ${joinList(g.buy_parties)}</div>`;
+        return `<tr class="hover:bg-slate-50">
+          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(g.sell_party || "—")}</td>
+          <td class="px-3 py-2">${detail}</td>
+          <td class="px-3 py-2 text-right">${fmt(g.trade_count)}</td>
+          <td class="px-3 py-2 text-right">${fmt(g.applicant_count)}</td>
+          <td class="px-3 py-2 text-right">
+            <button type="button" class="dl-broker rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold" data-sell-party="${TradeSlip.escapeHtml(g.sell_party || "")}">Broker Excel</button>
+          </td>
+        </tr>`;
+      }).join("");
+    }
+
+    document.getElementById("buyStatus").textContent = `${buyParties.length} part${buyParties.length === 1 ? "y" : "ies"}`;
+    document.getElementById("sellStatus").textContent = `${sellParties.length} part${sellParties.length === 1 ? "y" : "ies"}`;
+
+    buyBody.querySelectorAll(".dl-client").forEach((btn) => {
+      btn.addEventListener("click", () => downloadExcel("client", { party_id: btn.dataset.partyId }));
+    });
+    sellBody.querySelectorAll(".dl-broker").forEach((btn) => {
+      btn.addEventListener("click", () => downloadExcel("broker", { sell_party: btn.dataset.sellParty }));
+    });
+  }
+
+  async function downloadExcel(kind, extra) {
+    const params = queryParams();
+    if (kind === "client") {
+      if (!extra.party_id) {
+        alert("This buy party cannot be exported (missing party id).");
+        return;
+      }
+      params.set("party_id", extra.party_id);
+    } else {
+      params.set("sell_party", extra.sell_party);
+    }
+    const url = `/api/ipo/confirmations/${kind}.xlsx?${params.toString()}`;
+    TradeSlip.showProgress("Generating Excel…", kind === "client" ? "Consolidated client confirmation" : "Consolidated broker confirmation");
+    try {
+      const response = await TradeSlip.apiFetch(url);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(TradeSlip.parseErrorDetail(payload));
+      }
+      const blob = await response.blob();
+      const disp = response.headers.get("Content-Disposition") || "";
+      const match = /filename="?([^"]+)"?/i.exec(disp);
+      const filename = match ? match[1] : `${kind}_confirmation.xlsx`;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      alert(e.message || "Download failed.");
+    } finally {
+      TradeSlip.hideProgress();
+    }
+  }
+
+  document.getElementById("filterCategory").addEventListener("change", setSubCategoryOptions);
+  document.getElementById("applyFilters").addEventListener("click", loadGroups);
+  document.getElementById("clearFilters").addEventListener("click", () => {
+    document.getElementById("filterIpo").value = "";
+    document.getElementById("filterBuyParty").value = "";
+    document.getElementById("filterSellParty").value = "";
+    document.getElementById("filterFrom").value = "";
+    document.getElementById("filterTo").value = "";
+    document.getElementById("filterCategory").value = "";
+    setSubCategoryOptions();
+    document.getElementById("filterSubCategory").value = "";
+    loadGroups();
+  });
+
+  loadMeta().then(loadGroups);
+</script>
+{% endblock %}

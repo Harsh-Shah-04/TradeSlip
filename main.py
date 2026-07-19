@@ -48,6 +48,8 @@ from utils.ipo.models import (
     PositionCreate,
     PositionUpdate,
     SellCreate,
+    SellPartyCreate,
+    SellPartyUpdate,
     SellUpdate,
 )
 from utils.ipo.clients import (
@@ -63,7 +65,19 @@ from utils.ipo.clients import (
     update_applicant,
     update_party,
 )
+from utils.ipo.sell_parties import (
+    archive_sell_party,
+    create_sell_party,
+    delete_sell_party,
+    list_sell_parties,
+    update_sell_party,
+)
 from utils.ipo.categories import trade_category_payload
+from utils.ipo.confirmations import (
+    build_broker_confirmation_excel,
+    build_client_confirmation_excel,
+    list_confirmation_groups,
+)
 from utils.ipo.service import (
     archive_ipo,
     clear_position_allocations,
@@ -220,6 +234,11 @@ def validate_trade_date_iso(value: str) -> str:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid trade_date.") from exc
     return value
+
+
+def sanitize_download_filename(filename: str, *, fallback: str = "download.bin") -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", (filename or "").strip()).strip("._")
+    return safe or fallback
 
 
 def require_broker(
@@ -603,6 +622,19 @@ async def ipo_clients_page(
     return templates.TemplateResponse(
         "ipo_clients.html",
         page_context(request, broker, nav_active="ipo_clients", module="ipo"),
+    )
+
+
+@app.get("/ipo/confirmations", response_class=HTMLResponse)
+async def ipo_confirmations_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_confirmations.html",
+        page_context(request, broker, nav_active="ipo_confirmations", module="ipo"),
     )
 
 
@@ -1196,6 +1228,78 @@ async def ipo_list_parties(
     return JSONResponse(content={"parties": items})
 
 
+@app.get("/api/ipo/sell-parties")
+async def ipo_list_sell_parties(
+    _: BrokerAuth,
+    include_archived: bool = Query(default=False),
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        items = await asyncio.to_thread(
+            list_sell_parties,
+            include_archived=include_archived,
+            status=status,
+            search=search,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list sell parties")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"sell_parties": items})
+
+
+@app.post("/api/ipo/sell-parties")
+async def ipo_create_sell_party(admin: AdminAuth, payload: SellPartyCreate) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(create_sell_party, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to create sell party")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=201)
+
+
+@app.patch("/api/ipo/sell-parties/{sell_party_id}")
+async def ipo_patch_sell_party(
+    admin: AdminAuth, sell_party_id: str, payload: SellPartyUpdate
+) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(update_sell_party, sell_party_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to update sell party")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.post("/api/ipo/sell-parties/{sell_party_id}/archive")
+async def ipo_archive_sell_party(admin: AdminAuth, sell_party_id: str) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(archive_sell_party, sell_party_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.delete("/api/ipo/sell-parties/{sell_party_id}")
+async def ipo_delete_sell_party(admin: AdminAuth, sell_party_id: str) -> JSONResponse:
+    try:
+        await asyncio.to_thread(delete_sell_party, sell_party_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "id": sell_party_id})
+
+
 @app.post("/api/ipo/parties")
 async def ipo_create_party(admin: AdminAuth, payload: PartyCreate) -> JSONResponse:
     try:
@@ -1593,6 +1697,121 @@ async def ipo_clear_allocations(broker: BrokerAuth, position_id: str) -> JSONRes
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content=position)
+
+
+@app.get("/api/ipo/confirmations")
+async def ipo_list_confirmations(
+    broker: BrokerAuth,
+    ipo_id: str | None = Query(default=None),
+    party_id: str | None = Query(default=None),
+    sell_party: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    category: str | None = Query(default=None),
+    sub_category: str | None = Query(default=None),
+) -> JSONResponse:
+    if date_from:
+        validate_trade_date_iso(date_from)
+    if date_to:
+        validate_trade_date_iso(date_to)
+    try:
+        groups = await asyncio.to_thread(
+            list_confirmation_groups,
+            broker.id,
+            ipo_id=ipo_id,
+            party_id=party_id,
+            sell_party=sell_party,
+            date_from=date_from,
+            date_to=date_to,
+            category=category,
+            sub_category=sub_category,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list confirmation groups")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=groups)
+
+
+@app.get("/api/ipo/confirmations/client.xlsx")
+async def ipo_client_confirmation_xlsx(
+    broker: BrokerAuth,
+    party_id: str = Query(...),
+    ipo_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    category: str | None = Query(default=None),
+    sub_category: str | None = Query(default=None),
+) -> StreamingResponse:
+    if date_from:
+        validate_trade_date_iso(date_from)
+    if date_to:
+        validate_trade_date_iso(date_to)
+    try:
+        xlsx_bytes, filename = await asyncio.to_thread(
+            build_client_confirmation_excel,
+            broker.id,
+            party_id=party_id,
+            ipo_id=ipo_id,
+            date_from=date_from,
+            date_to=date_to,
+            category=category,
+            sub_category=sub_category,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to build client confirmation Excel")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    stream = io.BytesIO(xlsx_bytes)
+    stream.seek(0)
+    safe_name = sanitize_download_filename(filename, fallback="Client_Confirmation.xlsx")
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
+@app.get("/api/ipo/confirmations/broker.xlsx")
+async def ipo_broker_confirmation_xlsx(
+    broker: BrokerAuth,
+    sell_party: str = Query(...),
+    ipo_id: str | None = Query(default=None),
+    party_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    category: str | None = Query(default=None),
+    sub_category: str | None = Query(default=None),
+) -> StreamingResponse:
+    if date_from:
+        validate_trade_date_iso(date_from)
+    if date_to:
+        validate_trade_date_iso(date_to)
+    try:
+        xlsx_bytes, filename = await asyncio.to_thread(
+            build_broker_confirmation_excel,
+            broker.id,
+            sell_party=sell_party,
+            ipo_id=ipo_id,
+            party_id=party_id,
+            date_from=date_from,
+            date_to=date_to,
+            category=category,
+            sub_category=sub_category,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to build broker confirmation Excel")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    stream = io.BytesIO(xlsx_bytes)
+    stream.seek(0)
+    safe_name = sanitize_download_filename(filename, fallback="Broker_Confirmation.xlsx")
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 # Run locally: uvicorn main:app --reload

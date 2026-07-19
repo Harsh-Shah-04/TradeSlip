@@ -103,12 +103,16 @@
           <input type="number" id="buyApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
         <div>
-          <label class="block text-sm font-medium mb-1" id="buyRateLabel" for="buyRate">Application Amount</label>
+          <label class="block text-sm font-medium mb-1" id="buyRateLabel" for="buyRate">BUY RATE</label>
           <input type="number" id="buyRate" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-          <p id="buyRateHint" class="mt-1 text-xs text-slate-500"></p>
         </div>
       </div>
-      <p class="text-sm text-slate-600">BUY AMT: <span id="buyAmtPreview" class="font-semibold">0</span></p>
+      <div id="buyAppAmountWrap">
+        <label class="block text-sm font-medium mb-1" for="buyAppAmount">Application Amount</label>
+        <input type="text" id="buyAppAmount" readonly class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-slate-50 text-slate-700" placeholder="—" />
+        <p id="buyAppAmountHint" class="mt-1 text-xs text-slate-500">From IPO Master for this Sub-Category — used for ledger, not BUY AMT.</p>
+      </div>
+      <p class="text-sm text-slate-600">BUY AMT: <span id="buyAmtPreview" class="font-semibold">0</span> <span class="text-xs text-slate-400">(BUY APP × BUY RATE)</span></p>
 
       <div id="buySellSectionWrap" class="border-t border-slate-200 pt-3">
         <button type="button" id="buySellToggle" class="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100">
@@ -124,7 +128,9 @@
             </div>
             <div>
               <label class="block text-sm font-medium mb-1" for="buySellParty">SELL PARTY</label>
-              <input type="text" id="buySellParty" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+              <select id="buySellParty" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+                <option value="">Select sell party</option>
+              </select>
             </div>
             <div>
               <label class="block text-sm font-medium mb-1" id="buySellAppLabel" for="buySellApp">SELL APP</label>
@@ -184,7 +190,9 @@
         </div>
         <div>
           <label class="block text-sm font-medium mb-1" for="sellParty">SELL PARTY</label>
-          <input type="text" id="sellParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+          <select id="sellParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2">
+            <option value="">Select sell party</option>
+          </select>
         </div>
         <div>
           <label class="block text-sm font-medium mb-1" id="sellAppLabel" for="sellApp">SELL APP</label>
@@ -254,6 +262,7 @@
   let currentDetail = null;
   let clientParties = [];
   let applicantsByParty = {};
+  let sellPartyOptions = [];
 
   const posBody = document.getElementById("posBody");
   const posStatus = document.getElementById("posStatus");
@@ -266,6 +275,35 @@
 
   function fmt(n) {
     return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 4 });
+  }
+
+  function fillSellPartySelect(selectEl, selected) {
+    if (!selectEl) return;
+    const current = selected != null ? selected : selectEl.value;
+    selectEl.innerHTML =
+      '<option value="">Select sell party</option>' +
+      sellPartyOptions.map((p) =>
+        `<option value="${TradeSlip.escapeHtml(p.name)}">${TradeSlip.escapeHtml(p.name)}</option>`
+      ).join("");
+    if (current) {
+      const exists = [...selectEl.options].some((o) => o.value === current);
+      if (!exists) {
+        const opt = document.createElement("option");
+        opt.value = current;
+        opt.textContent = current;
+        selectEl.appendChild(opt);
+      }
+      selectEl.value = current;
+    }
+  }
+
+  async function loadSellParties() {
+    const response = await TradeSlip.apiFetch("/api/ipo/sell-parties?status=Active");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    sellPartyOptions = payload.sell_parties || [];
+    fillSellPartySelect(document.getElementById("buySellParty"));
+    fillSellPartySelect(document.getElementById("sellParty"));
   }
 
   function statusBadge(status) {
@@ -370,10 +408,10 @@
     const map = {
       "10+": ipo.amount_bhni,
       "2+": ipo.amount_shni,
-      "15K": ipo.amount_retail,
-      "2-": ipo.amount_retail,
-      "15K Shareholder": ipo.amount_shareholder,
-      "2- Shareholder": ipo.amount_shareholder,
+      "15K": ipo.amount_retail_15k,
+      "2-": ipo.amount_retail_2minus,
+      "15K Shareholder": ipo.amount_shareholder_15k,
+      "2- Shareholder": ipo.amount_shareholder_2minus,
     };
     const raw = map[sub];
     if (raw === null || raw === undefined || raw === "") return null;
@@ -381,37 +419,32 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  function applyApplicationAmount({ overwrite = true } = {}) {
+  function refreshApplicationAmountDisplay() {
     const cat = document.getElementById("buyCategory").value || "IPO Application";
-    const rateInput = document.getElementById("buyRate");
-    const label = document.getElementById("buyRateLabel");
-    const hint = document.getElementById("buyRateHint");
+    const wrap = document.getElementById("buyAppAmountWrap");
+    const amountInput = document.getElementById("buyAppAmount");
+    const hint = document.getElementById("buyAppAmountHint");
+    document.getElementById("buyRateLabel").textContent = "BUY RATE";
     if (cat === "Premium") {
-      label.textContent = "BUY RATE";
-      rateInput.readOnly = false;
-      rateInput.classList.remove("bg-slate-50", "text-slate-700");
-      hint.textContent = "Enter share rate for Premium trades.";
+      wrap.classList.add("hidden");
+      amountInput.value = "";
       return;
     }
-    label.textContent = "Application Amount";
+    wrap.classList.remove("hidden");
     const amount = applicationAmountForSub(
       findSelectedBuyIpo(),
       document.getElementById("buySubCategory").value
     );
     if (amount != null) {
-      if (overwrite) rateInput.value = amount;
-      rateInput.readOnly = true;
-      rateInput.classList.add("bg-slate-50", "text-slate-700");
-      hint.textContent = "Filled from IPO Master for this Sub-Category.";
-      recalcBuy();
+      amountInput.value = String(amount);
+      hint.textContent = "From IPO Master for this Sub-Category — used for ledger, not BUY AMT.";
     } else {
-      rateInput.readOnly = false;
-      rateInput.classList.remove("bg-slate-50", "text-slate-700");
-      hint.textContent = "Set Application Amounts in IPO Master to auto-fill.";
+      amountInput.value = "";
+      hint.textContent = "Set Application Amounts in IPO Master to show the ledger amount here.";
     }
   }
 
-  function applyCategoryUI(preferredSub, { overwriteAmount = true } = {}) {
+  function applyCategoryUI(preferredSub) {
     if (!tradeCategoryMeta) return;
     const cat = document.getElementById("buyCategory").value || "IPO Application";
     const subs = (tradeCategoryMeta.sub_categories && tradeCategoryMeta.sub_categories[cat]) || [];
@@ -440,12 +473,12 @@
       buyApp.step = "1";
       buyApp.min = "1";
     }
-    applyApplicationAmount({ overwrite: overwriteAmount });
+    refreshApplicationAmountDisplay();
   }
 
   document.getElementById("buyCategory").addEventListener("change", () => applyCategoryUI());
-  document.getElementById("buySubCategory").addEventListener("change", () => applyApplicationAmount({ overwrite: true }));
-  document.getElementById("buyIpo").addEventListener("change", () => applyApplicationAmount({ overwrite: true }));
+  document.getElementById("buySubCategory").addEventListener("change", refreshApplicationAmountDisplay);
+  document.getElementById("buyIpo").addEventListener("change", refreshApplicationAmountDisplay);
 
   async function loadLabels() {
     // Kept for Client Master compatibility; buy form uses trade-categories
@@ -600,7 +633,7 @@
     document.getElementById("buyAmtPreview").textContent = "0";
     clearBuySellFields();
     setBuySellOpen(false);
-    applyCategoryUI(undefined, { overwriteAmount: true });
+    applyCategoryUI();
     document.getElementById("buyModal").classList.remove("hidden");
   }
 
@@ -632,10 +665,9 @@
     document.getElementById("buyDate").value = (payload.trade_date || "").slice(0, 10);
     document.getElementById("buyParty").value = payload.party_id || "";
     document.getElementById("buyCategory").value = payload.category || "IPO Application";
-    applyCategoryUI(payload.sub_category || "", { overwriteAmount: false });
+    applyCategoryUI(payload.sub_category || "");
     document.getElementById("buyApp").value = payload.buy_app ?? "";
     document.getElementById("buyRate").value = payload.buy_rate ?? "";
-    applyApplicationAmount({ overwrite: false });
     recalcBuy();
     document.getElementById("buyModal").classList.remove("hidden");
   }
@@ -1017,6 +1049,6 @@
     loadPositions();
   });
 
-  Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster()]).then(loadPositions);
+  Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster(), loadSellParties()]).then(loadPositions);
 </script>
 {% endblock %}

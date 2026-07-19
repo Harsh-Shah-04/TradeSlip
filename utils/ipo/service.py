@@ -7,12 +7,12 @@ from typing import Any
 import httpx
 
 from utils.ipo.categories import (
-    application_amount_from_ipo,
     category_group_for,
     is_premium,
     validate_category_pair,
 )
 from utils.ipo.clients import get_applicant, get_party
+from utils.ipo.sell_parties import resolve_active_sell_party_name
 from utils.ipo.models import (
     AllocationSet,
     IpoMasterCreate,
@@ -158,8 +158,10 @@ def create_ipo(payload: IpoMasterCreate) -> dict[str, Any]:
         "notes": payload.notes or "",
         "amount_bhni": payload.amount_bhni,
         "amount_shni": payload.amount_shni,
-        "amount_retail": payload.amount_retail,
-        "amount_shareholder": payload.amount_shareholder,
+        "amount_retail_15k": payload.amount_retail_15k,
+        "amount_retail_2minus": payload.amount_retail_2minus,
+        "amount_shareholder_15k": payload.amount_shareholder_15k,
+        "amount_shareholder_2minus": payload.amount_shareholder_2minus,
         "is_archived": False,
         "updated_at": _now(),
     }
@@ -203,14 +205,22 @@ def update_ipo(ipo_id: str, payload: IpoMasterUpdate) -> dict[str, Any]:
         patch["amount_shni"] = None
     elif payload.amount_shni is not None:
         patch["amount_shni"] = payload.amount_shni
-    if payload.clear_amount_retail:
-        patch["amount_retail"] = None
-    elif payload.amount_retail is not None:
-        patch["amount_retail"] = payload.amount_retail
-    if payload.clear_amount_shareholder:
-        patch["amount_shareholder"] = None
-    elif payload.amount_shareholder is not None:
-        patch["amount_shareholder"] = payload.amount_shareholder
+    if payload.clear_amount_retail_15k:
+        patch["amount_retail_15k"] = None
+    elif payload.amount_retail_15k is not None:
+        patch["amount_retail_15k"] = payload.amount_retail_15k
+    if payload.clear_amount_retail_2minus:
+        patch["amount_retail_2minus"] = None
+    elif payload.amount_retail_2minus is not None:
+        patch["amount_retail_2minus"] = payload.amount_retail_2minus
+    if payload.clear_amount_shareholder_15k:
+        patch["amount_shareholder_15k"] = None
+    elif payload.amount_shareholder_15k is not None:
+        patch["amount_shareholder_15k"] = payload.amount_shareholder_15k
+    if payload.clear_amount_shareholder_2minus:
+        patch["amount_shareholder_2minus"] = None
+    elif payload.amount_shareholder_2minus is not None:
+        patch["amount_shareholder_2minus"] = payload.amount_shareholder_2minus
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
@@ -466,11 +476,6 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
 
     category, sub_category = validate_category_pair(payload.category, payload.sub_category)
     buy_rate = float(_money(payload.buy_rate))
-    # Prefer IPO Master application amount for application-style sub-categories
-    if not is_premium(category):
-        configured = application_amount_from_ipo(ipo, sub_category)
-        if configured is not None:
-            buy_rate = float(_money(configured))
 
     buy_amt = (_money(payload.buy_app) * _money(buy_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
@@ -519,6 +524,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
+    sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     sell_row = {
         "broker_id": broker_id,
         "position_id": position_id,
@@ -526,7 +532,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "sell_app": float(_money(sell_app)),
         "sell_rate": float(_money(sell_rate)),
         "sell_amt": float(sell_amt),
-        "sell_party": str(payload.sell_party or "").strip(),
+        "sell_party": sell_party_name,
         "dalal": None if payload.sell_dalal is None else float(_money(payload.sell_dalal)),
         "notes": "",
         "updated_at": _now(),
@@ -590,10 +596,6 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         )
 
     buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
-    if not is_premium(category):
-        configured = application_amount_from_ipo(ipo, sub_category)
-        if configured is not None:
-            buy_rate = configured
     buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     party_id = existing.get("party_id")
@@ -673,6 +675,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
     sell_amt = (_money(payload.sell_app) * _money(payload.sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
+    sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     row = {
         "broker_id": broker_id,
         "position_id": position_id,
@@ -680,7 +683,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         "sell_app": float(_money(payload.sell_app)),
         "sell_rate": float(_money(payload.sell_rate)),
         "sell_amt": float(sell_amt),
-        "sell_party": payload.sell_party.strip(),
+        "sell_party": sell_party_name,
         "dalal": None if payload.dalal is None else float(_money(payload.dalal)),
         "notes": payload.notes or "",
         "updated_at": _now(),
@@ -742,7 +745,7 @@ def update_sell(
         "sell_rate": float(_money(sell_rate)),
         "sell_amt": float(sell_amt),
         "sell_party": (
-            payload.sell_party.strip()
+            resolve_active_sell_party_name(payload.sell_party)
             if payload.sell_party is not None
             else existing_sell["sell_party"]
         ),

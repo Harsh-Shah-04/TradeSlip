@@ -12,10 +12,12 @@ CREATE TABLE IF NOT EXISTS ipo_master (
     CHECK (status IN ('Upcoming', 'Active', 'Closed')),
   notes TEXT NOT NULL DEFAULT '',
   -- Default application amounts (configured once per IPO)
-  amount_bhni NUMERIC(18, 4),          -- bHNI → Sub-Category 10+
-  amount_shni NUMERIC(18, 4),          -- sHNI → Sub-Category 2+
-  amount_retail NUMERIC(18, 4),        -- Retail → 15K, 2-
-  amount_shareholder NUMERIC(18, 4),   -- Shareholder → 15K Shareholder, 2- Shareholder
+  amount_bhni NUMERIC(18, 4),                 -- bHNI → Sub-Category 10+
+  amount_shni NUMERIC(18, 4),                 -- sHNI → Sub-Category 2+
+  amount_retail_15k NUMERIC(18, 4),           -- Retail → 15K
+  amount_retail_2minus NUMERIC(18, 4),        -- Retail → 2-
+  amount_shareholder_15k NUMERIC(18, 4),      -- Shareholder → 15K Shareholder
+  amount_shareholder_2minus NUMERIC(18, 4),   -- Shareholder → 2- Shareholder
   is_archived BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -122,6 +124,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ipo_parties_name_lower
 
 CREATE INDEX IF NOT EXISTS idx_ipo_parties_active
   ON ipo_parties (status)
+  WHERE is_archived = FALSE;
+
+-- Sell Party master (counterparties for sells / broker confirmations)
+CREATE TABLE IF NOT EXISTS ipo_sell_parties (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'Active'
+    CHECK (status IN ('Active', 'Inactive')),
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ipo_sell_parties_name_lower
+  ON ipo_sell_parties (lower(name));
+
+CREATE INDEX IF NOT EXISTS idx_ipo_sell_parties_active
+  ON ipo_sell_parties (status)
   WHERE is_archived = FALSE;
 
 CREATE TABLE IF NOT EXISTS ipo_applicants (

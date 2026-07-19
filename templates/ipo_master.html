@@ -42,8 +42,43 @@
   <p id="masterStatus" class="px-4 py-3 text-sm text-slate-500"></p>
 </section>
 
+<section class="mt-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h2 class="font-semibold">Sell Parties</h2>
+      <p class="text-xs text-slate-500 mt-0.5">Master list for sell forms and broker confirmations (e.g. AIRAN, MAMA).</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="text-sm text-slate-600 flex items-center gap-2">
+        <input type="checkbox" id="showArchivedSellParties" class="rounded border-slate-300" />
+        Show archived
+      </label>
+      {% if is_admin %}
+      <button type="button" id="addSellPartyBtn" class="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-800">Add Sell Party</button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+        <tr>
+          <th class="px-3 py-2">Name</th>
+          <th class="px-3 py-2">Status</th>
+          <th class="px-3 py-2">Notes</th>
+          <th class="px-3 py-2 text-right">Sells</th>
+          <th class="px-3 py-2 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sellPartyBody" class="divide-y divide-slate-100">
+        <tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p id="sellPartyStatus" class="px-4 py-3 text-sm text-slate-500"></p>
+</section>
+
 <div id="ipoFormModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-  <div class="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white border p-6 shadow-2xl">
+  <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white border p-6 shadow-2xl">
     <h3 id="ipoFormTitle" class="text-xl font-semibold mb-4">Add IPO</h3>
     <form id="ipoMasterForm" class="space-y-3">
       <input type="hidden" id="ipoEditId" />
@@ -80,7 +115,7 @@
 
       <fieldset class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-3">
         <legend class="px-1 text-sm font-semibold text-slate-800">IPO Application Amounts</legend>
-        <p class="text-xs text-slate-500">Configure once per IPO. Buy trades auto-fill Application Amount from Sub-Category.</p>
+        <p class="text-xs text-slate-500">Configure once per IPO. Shown on buy form for ledger reference — does not set BUY RATE.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-medium mb-1" for="ipoAmtBhni">bHNI (10+)</label>
@@ -90,13 +125,31 @@
             <label class="block text-sm font-medium mb-1" for="ipoAmtShni">sHNI (2+)</label>
             <input type="number" id="ipoAmtShni" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 298800" />
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1" for="ipoAmtRetail">Retail <span class="font-normal text-slate-500">(15K / 2-)</span></label>
-            <input type="number" id="ipoAmtRetail" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Retail</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium mb-1" for="ipoAmtRetail15k">15K Amount</label>
+              <input type="number" id="ipoAmtRetail15k" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="ipoAmtRetail2minus">2- Amount</label>
+              <input type="number" id="ipoAmtRetail2minus" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1" for="ipoAmtShareholder">Shareholder <span class="font-normal text-slate-500">(15K / 2- SH)</span></label>
-            <input type="number" id="ipoAmtShareholder" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Shareholder</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium mb-1" for="ipoAmtShareholder15k">15K Shareholder Amount</label>
+              <input type="number" id="ipoAmtShareholder15k" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="ipoAmtShareholder2minus">2- Shareholder Amount</label>
+              <input type="number" id="ipoAmtShareholder2minus" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+            </div>
           </div>
         </div>
       </fieldset>
@@ -122,6 +175,35 @@
       <button type="button" id="deleteWarnClose" class="rounded-lg border px-4 py-2 text-sm">Close</button>
       <button type="button" id="deleteWarnArchive" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white">Archive instead</button>
     </div>
+  </div>
+</div>
+
+<div id="sellPartyModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white border p-6 shadow-2xl">
+    <h3 id="sellPartyFormTitle" class="text-xl font-semibold mb-4">Add Sell Party</h3>
+    <form id="sellPartyForm" class="space-y-3">
+      <input type="hidden" id="sellPartyEditId" />
+      <div>
+        <label class="block text-sm font-medium mb-1" for="sellPartyName">Name</label>
+        <input id="sellPartyName" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="e.g. AIRAN" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="sellPartyStatus">Status</label>
+        <select id="sellPartyStatus" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="sellPartyNotes">Notes</label>
+        <textarea id="sellPartyNotes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2"></textarea>
+      </div>
+      <p id="sellPartyFormError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="sellPartyFormCancel" class="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+        <button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save</button>
+      </div>
+    </form>
   </div>
 </div>
 {% endblock %}
@@ -226,8 +308,10 @@
     document.getElementById("ipoNotes").value = item ? item.notes || "" : "";
     document.getElementById("ipoAmtBhni").value = item && item.amount_bhni != null ? item.amount_bhni : "";
     document.getElementById("ipoAmtShni").value = item && item.amount_shni != null ? item.amount_shni : "";
-    document.getElementById("ipoAmtRetail").value = item && item.amount_retail != null ? item.amount_retail : "";
-    document.getElementById("ipoAmtShareholder").value = item && item.amount_shareholder != null ? item.amount_shareholder : "";
+    document.getElementById("ipoAmtRetail15k").value = item && item.amount_retail_15k != null ? item.amount_retail_15k : "";
+    document.getElementById("ipoAmtRetail2minus").value = item && item.amount_retail_2minus != null ? item.amount_retail_2minus : "";
+    document.getElementById("ipoAmtShareholder15k").value = item && item.amount_shareholder_15k != null ? item.amount_shareholder_15k : "";
+    document.getElementById("ipoAmtShareholder2minus").value = item && item.amount_shareholder_2minus != null ? item.amount_shareholder_2minus : "";
     document.getElementById("ipoFormModal").classList.remove("hidden");
   }
 
@@ -264,8 +348,10 @@
       const editId = document.getElementById("ipoEditId").value;
       const amountBhni = amountValue("ipoAmtBhni");
       const amountShni = amountValue("ipoAmtShni");
-      const amountRetail = amountValue("ipoAmtRetail");
-      const amountShareholder = amountValue("ipoAmtShareholder");
+      const amountRetail15k = amountValue("ipoAmtRetail15k");
+      const amountRetail2minus = amountValue("ipoAmtRetail2minus");
+      const amountShareholder15k = amountValue("ipoAmtShareholder15k");
+      const amountShareholder2minus = amountValue("ipoAmtShareholder2minus");
       const body = {
         name: document.getElementById("ipoName").value.trim(),
         display_name: document.getElementById("ipoDisplay").value.trim(),
@@ -276,14 +362,18 @@
         notes: document.getElementById("ipoNotes").value.trim(),
         amount_bhni: amountBhni,
         amount_shni: amountShni,
-        amount_retail: amountRetail,
-        amount_shareholder: amountShareholder,
+        amount_retail_15k: amountRetail15k,
+        amount_retail_2minus: amountRetail2minus,
+        amount_shareholder_15k: amountShareholder15k,
+        amount_shareholder_2minus: amountShareholder2minus,
       };
       if (editId) {
         body.clear_amount_bhni = amountBhni === null;
         body.clear_amount_shni = amountShni === null;
-        body.clear_amount_retail = amountRetail === null;
-        body.clear_amount_shareholder = amountShareholder === null;
+        body.clear_amount_retail_15k = amountRetail15k === null;
+        body.clear_amount_retail_2minus = amountRetail2minus === null;
+        body.clear_amount_shareholder_15k = amountShareholder15k === null;
+        body.clear_amount_shareholder_2minus = amountShareholder2minus === null;
       }
       TradeSlip.showProgress("Saving…", "Updating IPO Master.");
       try {
@@ -327,5 +417,138 @@
 
   document.getElementById("showArchived").addEventListener("change", loadIpos);
   loadIpos();
+
+  // --- Sell Parties ---
+  let sellParties = [];
+  const sellPartyBody = document.getElementById("sellPartyBody");
+  const sellPartyStatusEl = document.getElementById("sellPartyStatus");
+
+  function partyStatusBadge(s) {
+    const map = {
+      Active: "bg-emerald-100 text-emerald-800",
+      Inactive: "bg-slate-100 text-slate-700",
+    };
+    return `<span class="rounded-full px-2 py-0.5 text-xs font-medium ${map[s] || "bg-slate-100"}">${TradeSlip.escapeHtml(s)}</span>`;
+  }
+
+  async function loadSellParties() {
+    sellPartyStatusEl.textContent = "Loading…";
+    const archived = document.getElementById("showArchivedSellParties").checked;
+    const response = await TradeSlip.apiFetch(`/api/ipo/sell-parties?include_archived=${archived}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      sellPartyBody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(TradeSlip.parseErrorDetail(payload))}</td></tr>`;
+      sellPartyStatusEl.textContent = "";
+      return;
+    }
+    sellParties = payload.sell_parties || [];
+    if (!sellParties.length) {
+      sellPartyBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No sell parties yet.</td></tr>';
+      sellPartyStatusEl.textContent = "0 sell parties";
+      return;
+    }
+    sellPartyBody.innerHTML = sellParties.map((p) => {
+      const archivedTag = p.is_archived ? ' <span class="text-xs text-slate-400">(archived)</span>' : "";
+      const actions = isAdmin
+        ? `<button type="button" class="edit-sp rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</button>
+           <button type="button" class="archive-sp rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Archive</button>
+           <button type="button" class="del-sp rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>`
+        : "—";
+      return `<tr class="hover:bg-slate-50 ${p.is_archived ? "opacity-60" : ""}">
+        <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(p.name)}${archivedTag}</td>
+        <td class="px-3 py-2">${partyStatusBadge(p.status)}</td>
+        <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(p.notes || "—")}</td>
+        <td class="px-3 py-2 text-right">${p.trade_count || 0}</td>
+        <td class="px-3 py-2 text-right space-x-1">${actions}</td>
+      </tr>`;
+    }).join("");
+    sellPartyStatusEl.textContent = `${sellParties.length} sell part${sellParties.length === 1 ? "y" : "ies"}`;
+
+    if (!isAdmin) return;
+    sellPartyBody.querySelectorAll(".edit-sp").forEach((btn) => {
+      btn.addEventListener("click", () => openSellPartyForm(sellParties.find((x) => x.id === btn.dataset.id)));
+    });
+    sellPartyBody.querySelectorAll(".archive-sp").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Archive this sell party? It will be hidden from sell dropdowns.")) return;
+        TradeSlip.showProgress("Archiving…", "Updating sell party.");
+        try {
+          const response = await TradeSlip.apiFetch(`/api/ipo/sell-parties/${encodeURIComponent(btn.dataset.id)}/archive`, { method: "POST" });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+          await loadSellParties();
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          TradeSlip.hideProgress();
+        }
+      });
+    });
+    sellPartyBody.querySelectorAll(".del-sp").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this sell party permanently?")) return;
+        TradeSlip.showProgress("Deleting…", "Removing sell party.");
+        try {
+          const response = await TradeSlip.apiFetch(`/api/ipo/sell-parties/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE" });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+          await loadSellParties();
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          TradeSlip.hideProgress();
+        }
+      });
+    });
+  }
+
+  function openSellPartyForm(item) {
+    document.getElementById("sellPartyFormError").classList.add("hidden");
+    document.getElementById("sellPartyEditId").value = item ? item.id : "";
+    document.getElementById("sellPartyFormTitle").textContent = item ? "Edit Sell Party" : "Add Sell Party";
+    document.getElementById("sellPartyName").value = item ? item.name : "";
+    document.getElementById("sellPartyStatus").value = item ? item.status : "Active";
+    document.getElementById("sellPartyNotes").value = item ? item.notes || "" : "";
+    document.getElementById("sellPartyModal").classList.remove("hidden");
+  }
+
+  if (isAdmin) {
+    document.getElementById("addSellPartyBtn").addEventListener("click", () => openSellPartyForm(null));
+    document.getElementById("sellPartyFormCancel").addEventListener("click", () => document.getElementById("sellPartyModal").classList.add("hidden"));
+    document.getElementById("sellPartyForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("sellPartyFormError");
+      err.classList.add("hidden");
+      const editId = document.getElementById("sellPartyEditId").value;
+      const body = {
+        name: document.getElementById("sellPartyName").value.trim(),
+        status: document.getElementById("sellPartyStatus").value,
+        notes: document.getElementById("sellPartyNotes").value.trim(),
+      };
+      TradeSlip.showProgress("Saving…", "Updating sell party.");
+      try {
+        const response = await TradeSlip.apiFetch(
+          editId ? `/api/ipo/sell-parties/${encodeURIComponent(editId)}` : "/api/ipo/sell-parties",
+          {
+            method: editId ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+        document.getElementById("sellPartyModal").classList.add("hidden");
+        await loadSellParties();
+      } catch (error) {
+        err.textContent = error.message;
+        err.classList.remove("hidden");
+      } finally {
+        TradeSlip.hideProgress();
+      }
+    });
+  }
+
+  document.getElementById("showArchivedSellParties").addEventListener("change", loadSellParties);
+  loadSellParties();
 </script>
 {% endblock %}
