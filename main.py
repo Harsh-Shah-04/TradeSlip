@@ -39,10 +39,16 @@ from utils.auth import (
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
 from utils.ipo.models import (
     AllocationSet,
+    AllotmentBulkUpdate,
+    AllotmentSeedRequest,
+    AllotmentUpdate,
     ApplicantCreate,
     ApplicantUpdate,
     IpoMasterCreate,
     IpoMasterUpdate,
+    LedgerPaymentRequest,
+    MarkSoldRequest,
+    MarkSoldRowRequest,
     PartyCreate,
     PartyUpdate,
     PositionCreate,
@@ -51,6 +57,7 @@ from utils.ipo.models import (
     SellPartyCreate,
     SellPartyUpdate,
     SellUpdate,
+    SettlementCreateRequest,
 )
 from utils.ipo.clients import (
     archive_applicant,
@@ -59,6 +66,7 @@ from utils.ipo.clients import (
     create_party,
     delete_applicant,
     delete_party,
+    get_party,
     import_clients_from_excel,
     list_applicants,
     list_parties,
@@ -77,6 +85,28 @@ from utils.ipo.confirmations import (
     build_broker_confirmation_excel,
     build_client_confirmation_excel,
     list_confirmation_groups,
+)
+from utils.ipo.allotments import (
+    archive_allotment,
+    bulk_update_allotments,
+    list_allotments,
+    mark_sold,
+    mark_sold_row,
+    seed_allotments,
+    unmark_sold,
+    update_allotment,
+)
+from utils.ipo.settlement import (
+    build_settlement_excel,
+    create_or_refresh_draft,
+    finalize_settlement,
+    get_settlement,
+    preview_settlement,
+)
+from utils.ipo.ledger import (
+    build_statement_excel,
+    list_ledger,
+    record_payment,
 )
 from utils.ipo.service import (
     archive_ipo,
@@ -635,6 +665,45 @@ async def ipo_confirmations_page(
     return templates.TemplateResponse(
         "ipo_confirmations.html",
         page_context(request, broker, nav_active="ipo_confirmations", module="ipo"),
+    )
+
+
+@app.get("/ipo/allotments", response_class=HTMLResponse)
+async def ipo_allotments_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_allotments.html",
+        page_context(request, broker, nav_active="ipo_allotments", module="ipo"),
+    )
+
+
+@app.get("/ipo/settlement", response_class=HTMLResponse)
+async def ipo_settlement_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_settlement.html",
+        page_context(request, broker, nav_active="ipo_settlement", module="ipo"),
+    )
+
+
+@app.get("/ipo/ledger", response_class=HTMLResponse)
+async def ipo_ledger_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_ledger.html",
+        page_context(request, broker, nav_active="ipo_ledger", module="ipo"),
     )
 
 
@@ -1815,6 +1884,224 @@ async def ipo_broker_confirmation_xlsx(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
+# --- Phase 3: Allotments / Settlement / Ledger (admin) ---
+
+
+@app.get("/api/ipo/allotments")
+async def ipo_list_allotments(admin: AdminAuth, ipo_id: str = Query(...)) -> JSONResponse:
+    try:
+        payload = await asyncio.to_thread(list_allotments, ipo_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=payload)
+
+
+@app.post("/api/ipo/allotments/seed")
+async def ipo_seed_allotments(admin: AdminAuth, payload: AllotmentSeedRequest) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(seed_allotments, payload.ipo_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/bulk-update")
+async def ipo_bulk_update_allotments(
+    admin: AdminAuth, payload: AllotmentBulkUpdate
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(bulk_update_allotments, payload.updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if result.get("errors") and not result.get("updated"):
+        raise HTTPException(status_code=400, detail="; ".join(result["errors"][:5]))
+    return JSONResponse(content=result)
+
+
+@app.patch("/api/ipo/allotments/{allotment_id}")
+async def ipo_patch_allotment(
+    admin: AdminAuth, allotment_id: str, payload: AllotmentUpdate
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(update_allotment, allotment_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/mark-sold")
+async def ipo_mark_sold_bulk(admin: AdminAuth, payload: MarkSoldRequest) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(mark_sold, payload.ipo_id, payload.sell_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/{allotment_id}/mark-sold")
+async def ipo_mark_sold_one(
+    admin: AdminAuth, allotment_id: str, payload: MarkSoldRowRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(mark_sold_row, allotment_id, payload.sell_date)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/{allotment_id}/unmark-sold")
+async def ipo_unmark_sold(admin: AdminAuth, allotment_id: str) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(unmark_sold, allotment_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/{allotment_id}/archive")
+async def ipo_archive_allotment(admin: AdminAuth, allotment_id: str) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(archive_allotment, allotment_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/settlements/preview")
+async def ipo_settlement_preview(admin: AdminAuth, ipo_id: str = Query(...)) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(preview_settlement, ipo_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/settlements")
+async def ipo_create_settlement(
+    admin: AdminAuth, payload: SettlementCreateRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            create_or_refresh_draft, payload.ipo_id, admin.id, payload.notes or ""
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/settlements/{settlement_id}")
+async def ipo_get_settlement(admin: AdminAuth, settlement_id: str) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(get_settlement, settlement_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/settlements/{settlement_id}/finalize")
+async def ipo_finalize_settlement(admin: AdminAuth, settlement_id: str) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(finalize_settlement, settlement_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/settlements/{settlement_id}/export.xlsx")
+async def ipo_settlement_export(admin: AdminAuth, settlement_id: str) -> StreamingResponse:
+    try:
+        xlsx_bytes = await asyncio.to_thread(build_settlement_excel, settlement_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    stream = io.BytesIO(xlsx_bytes)
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="IPO_Settlement.xlsx"'},
+    )
+
+
+@app.get("/api/ipo/ledger")
+async def ipo_get_ledger(broker: BrokerAuth, party_id: str = Query(...)) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(list_ledger, party_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/ledger/payments")
+async def ipo_ledger_payment(admin: AdminAuth, payload: LedgerPaymentRequest) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            record_payment,
+            party_id=payload.party_id,
+            entry_type=payload.entry_type,
+            amount=payload.amount,
+            entry_date=payload.entry_date,
+            notes=payload.notes or "",
+            ipo_id=payload.ipo_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/ledger/{party_id}/statement.xlsx")
+async def ipo_ledger_statement(broker: BrokerAuth, party_id: str) -> StreamingResponse:
+    try:
+        party = await asyncio.to_thread(get_party, party_id, include_applicant_count=False)
+        name = party.get("name") or "Client"
+        xlsx_bytes = await asyncio.to_thread(build_statement_excel, party_id, name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    stream = io.BytesIO(xlsx_bytes)
+    stream.seek(0)
+    safe = sanitize_download_filename(f"{name}_Ledger.xlsx", fallback="Client_Ledger.xlsx")
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe}"'},
     )
 
 

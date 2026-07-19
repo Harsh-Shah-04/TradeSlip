@@ -103,6 +103,10 @@
           <label class="block text-sm font-medium mb-1" for="ipoListing">Listing Date</label>
           <input type="date" id="ipoListing" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="ipoListingPrice">Listing Price</label>
+          <input type="number" id="ipoListingPrice" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="Common sell premium" />
+        </div>
       </div>
       <div>
         <label class="block text-sm font-medium mb-1" for="ipoStatus">Status</label>
@@ -304,6 +308,7 @@
     document.getElementById("ipoOpen").value = item && item.open_date ? item.open_date : "";
     document.getElementById("ipoClose").value = item && item.close_date ? item.close_date : "";
     document.getElementById("ipoListing").value = item && item.listing_date ? item.listing_date : "";
+    document.getElementById("ipoListingPrice").value = item && item.listing_price != null ? item.listing_price : "";
     document.getElementById("ipoStatus").value = item ? item.status : "Upcoming";
     document.getElementById("ipoNotes").value = item ? item.notes || "" : "";
     document.getElementById("ipoAmtBhni").value = item && item.amount_bhni != null ? item.amount_bhni : "";
@@ -358,6 +363,7 @@
         open_date: document.getElementById("ipoOpen").value || null,
         close_date: document.getElementById("ipoClose").value || null,
         listing_date: document.getElementById("ipoListing").value || null,
+        listing_price: amountValue("ipoListingPrice"),
         status: document.getElementById("ipoStatus").value,
         notes: document.getElementById("ipoNotes").value.trim(),
         amount_bhni: amountBhni,
@@ -368,6 +374,7 @@
         amount_shareholder_2minus: amountShareholder2minus,
       };
       if (editId) {
+        body.clear_listing_price = body.listing_price === null;
         body.clear_amount_bhni = amountBhni === null;
         body.clear_amount_shni = amountShni === null;
         body.clear_amount_retail_15k = amountRetail15k === null;

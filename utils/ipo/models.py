@@ -23,6 +23,7 @@ class IpoMasterCreate(BaseModel):
     amount_retail_2minus: float | None = Field(default=None, ge=0)
     amount_shareholder_15k: float | None = Field(default=None, ge=0)
     amount_shareholder_2minus: float | None = Field(default=None, ge=0)
+    listing_price: float | None = Field(default=None, ge=0)
 
     @field_validator("status")
     @classmethod
@@ -51,6 +52,8 @@ class IpoMasterUpdate(BaseModel):
     amount_retail_2minus: float | None = Field(default=None, ge=0)
     amount_shareholder_15k: float | None = Field(default=None, ge=0)
     amount_shareholder_2minus: float | None = Field(default=None, ge=0)
+    listing_price: float | None = Field(default=None, ge=0)
+    clear_listing_price: bool = False
     clear_amount_bhni: bool = False
     clear_amount_shni: bool = False
     clear_amount_retail_15k: bool = False
@@ -66,6 +69,60 @@ class IpoMasterUpdate(BaseModel):
             return None
         if value not in ("Upcoming", "Active", "Closed"):
             raise ValueError("status must be Upcoming, Active, or Closed")
+        return value
+
+
+class AllotmentUpdate(BaseModel):
+    status: str | None = None
+    shares_allotted: int | None = Field(default=None, ge=0)
+    listing_price_override: float | None = Field(default=None, ge=0)
+    clear_listing_price_override: bool = False
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class AllotmentBulkItem(BaseModel):
+    id: str = Field(min_length=1)
+    status: str | None = None
+    shares_allotted: int | None = Field(default=None, ge=0)
+    listing_price_override: float | None = Field(default=None, ge=0)
+    clear_listing_price_override: bool = False
+
+
+class AllotmentBulkUpdate(BaseModel):
+    updates: list[AllotmentBulkItem] = Field(min_length=1)
+
+
+class AllotmentSeedRequest(BaseModel):
+    ipo_id: str = Field(min_length=1)
+
+
+class MarkSoldRequest(BaseModel):
+    ipo_id: str = Field(min_length=1)
+    sell_date: str = Field(min_length=10, max_length=10)
+
+
+class MarkSoldRowRequest(BaseModel):
+    sell_date: str = Field(min_length=10, max_length=10)
+
+
+class SettlementCreateRequest(BaseModel):
+    ipo_id: str = Field(min_length=1)
+    notes: str = Field(default="", max_length=2000)
+
+
+class LedgerPaymentRequest(BaseModel):
+    party_id: str = Field(min_length=1)
+    entry_type: str = Field(min_length=1)
+    amount: float = Field(gt=0)
+    entry_date: str = Field(min_length=10, max_length=10)
+    notes: str = Field(default="", max_length=2000)
+    ipo_id: str | None = None
+
+    @field_validator("entry_type")
+    @classmethod
+    def validate_type(cls, value: str) -> str:
+        if value not in ("PaymentReceived", "PaymentPaid"):
+            raise ValueError("entry_type must be PaymentReceived or PaymentPaid")
         return value
 
 
@@ -202,7 +259,6 @@ class PositionCreate(BaseModel):
     sell_party: str | None = Field(default=None, max_length=200)
     sell_app: float | None = Field(default=None, gt=0)
     sell_rate: float | None = Field(default=None, ge=0)
-    sell_dalal: float | None = None
 
     @field_validator("category", "sub_category")
     @classmethod
@@ -264,7 +320,6 @@ class SellCreate(BaseModel):
     sell_app: float = Field(gt=0)
     sell_rate: float = Field(ge=0)
     sell_party: str = Field(min_length=1, max_length=200)
-    dalal: float | None = None
     notes: str = Field(default="", max_length=1000)
 
     @field_validator("sell_party", "notes")
@@ -278,8 +333,6 @@ class SellUpdate(BaseModel):
     sell_app: float | None = Field(default=None, gt=0)
     sell_rate: float | None = Field(default=None, ge=0)
     sell_party: str | None = Field(default=None, min_length=1, max_length=200)
-    dalal: float | None = None
-    clear_dalal: bool = False
     notes: str | None = Field(default=None, max_length=1000)
 
 
@@ -329,6 +382,7 @@ def master_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> di
         "amount_retail_2minus": _optional_float(row.get("amount_retail_2minus")),
         "amount_shareholder_15k": _optional_float(row.get("amount_shareholder_15k")),
         "amount_shareholder_2minus": _optional_float(row.get("amount_shareholder_2minus")),
+        "listing_price": _optional_float(row.get("listing_price")),
         "is_archived": bool(row.get("is_archived", False)),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
@@ -395,6 +449,10 @@ def applicant_to_json(
 
 
 def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    # Prefer brokerage; fall back to legacy dalal column if migration not applied yet
+    brokerage_raw = row.get("brokerage")
+    if brokerage_raw is None:
+        brokerage_raw = row.get("dalal")
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -404,10 +462,113 @@ def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
         "sell_rate": float(row.get("sell_rate") or 0),
         "sell_amt": float(row.get("sell_amt") or 0),
         "sell_party": row.get("sell_party"),
-        "dalal": None if row.get("dalal") is None else float(row.get("dalal")),
+        "brokerage": None if brokerage_raw is None else float(brokerage_raw),
         "notes": row.get("notes") or "",
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+def allotment_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    applicant = row.get("ipo_applicants")
+    party = None
+    applicant_out = None
+    if isinstance(applicant, dict):
+        party_raw = applicant.get("ipo_parties")
+        if isinstance(party_raw, dict):
+            party = {
+                "id": str(party_raw.get("id") or ""),
+                "name": party_raw.get("name") or "",
+            }
+        applicant_out = {
+            "id": str(applicant.get("id") or row.get("applicant_id") or ""),
+            "name": applicant.get("name") or "",
+            "pan": applicant.get("pan") or "",
+            "dpid": applicant.get("dpid") or "",
+            "party_id": str(applicant.get("party_id") or (party or {}).get("id") or ""),
+            "party": party,
+        }
+    orphaned = row.get("position_id") is None
+    return {
+        "id": str(row.get("id") or ""),
+        "ipo_id": str(row.get("ipo_id") or ""),
+        "position_id": None if row.get("position_id") is None else str(row.get("position_id")),
+        "applicant_id": str(row.get("applicant_id") or ""),
+        "broker_id": str(row.get("broker_id") or ""),
+        "sub_category": row.get("sub_category") or "",
+        "cost_per_app": _optional_float(row.get("cost_per_app")),
+        "status": row.get("status") or "Pending",
+        "shares_allotted": int(row.get("shares_allotted") or 0),
+        "listing_price_override": _optional_float(row.get("listing_price_override")),
+        "is_sold": bool(row.get("is_sold", False)),
+        "sold_price": _optional_float(row.get("sold_price")),
+        "sold_at": _iso(row.get("sold_at")),
+        "is_archived": bool(row.get("is_archived", False)),
+        "orphaned": orphaned,
+        "notes": row.get("notes") or "",
+        "applicant": applicant_out,
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+def settlement_line_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("id") or ""),
+        "settlement_id": str(row.get("settlement_id") or ""),
+        "allotment_id": None if row.get("allotment_id") is None else str(row.get("allotment_id")),
+        "party_id": None if row.get("party_id") is None else str(row.get("party_id")),
+        "applicant_id": None if row.get("applicant_id") is None else str(row.get("applicant_id")),
+        "position_id": None if row.get("position_id") is None else str(row.get("position_id")),
+        "party_name": row.get("party_name") or "",
+        "applicant_name": row.get("applicant_name") or "",
+        "pan": row.get("pan") or "",
+        "dpid": row.get("dpid") or "",
+        "sub_category": row.get("sub_category") or "",
+        "application_amount": _optional_float(row.get("application_amount")),
+        "vyaj": float(row.get("vyaj") or 0),
+        "applied": float(row.get("applied") or 0),
+        "allotted_apps": float(row.get("allotted_apps") or 0),
+        "shares_allotted": int(row.get("shares_allotted") or 0),
+        "sell_premium": float(row.get("sell_premium") or 0),
+        "sell_amt": float(row.get("sell_amt") or 0),
+        "net_pl": float(row.get("net_pl") or 0),
+        "direction": row.get("direction") or "Settled",
+    }
+
+
+def settlement_to_json(
+    row: dict[str, Any], *, lines: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    payload = {
+        "id": str(row.get("id") or ""),
+        "ipo_id": str(row.get("ipo_id") or ""),
+        "broker_id": str(row.get("broker_id") or ""),
+        "status": row.get("status") or "Draft",
+        "listing_price_used": _optional_float(row.get("listing_price_used")),
+        "notes": row.get("notes") or "",
+        "finalized_at": _iso(row.get("finalized_at")),
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+    if lines is not None:
+        payload["lines"] = lines
+    return payload
+
+
+def ledger_entry_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("id") or ""),
+        "party_id": str(row.get("party_id") or ""),
+        "ipo_id": None if row.get("ipo_id") is None else str(row.get("ipo_id")),
+        "entry_type": row.get("entry_type"),
+        "amount": float(row.get("amount") or 0),
+        "balance_after": float(row.get("balance_after") or 0),
+        "reference_type": row.get("reference_type") or "",
+        "reference_id": None if row.get("reference_id") is None else str(row.get("reference_id")),
+        "entry_date": _iso(row.get("entry_date")),
+        "notes": row.get("notes") or "",
+        "created_at": _iso(row.get("created_at")),
     }
 
 

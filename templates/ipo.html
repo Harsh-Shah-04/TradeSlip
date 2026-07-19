@@ -142,6 +142,7 @@
             </div>
           </div>
           <p class="text-sm text-slate-600">SELL AMT: <span id="buySellAmtPreview" class="font-semibold">0</span></p>
+          <p class="text-sm text-emerald-700">Brokerage: <span id="buySellBrokeragePreview" class="font-semibold">0</span> <span class="text-xs text-slate-400">(Sell AMT − Buy AMT)</span></p>
         </div>
       </div>
 
@@ -203,12 +204,10 @@
           <input type="number" id="sellRate" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
         <div>
-          <label class="block text-sm font-medium mb-1" for="sellDalal">DALAL <span class="text-slate-400">(optional)</span></label>
-          <input type="number" id="sellDalal" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-        </div>
-        <div>
           <label class="block text-sm font-medium mb-1">&nbsp;</label>
           <p class="text-sm text-slate-600 pt-2">SELL AMT: <span id="sellAmtPreview" class="font-semibold">0</span></p>
+          <p class="text-sm text-emerald-700 pt-1">Brokerage: <span id="sellBrokeragePreview" class="font-semibold">0</span></p>
+          <p class="text-xs text-slate-400">Auto: Sell AMT − Buy AMT</p>
         </div>
       </div>
       <p id="sellError" class="hidden text-sm text-red-600"></p>
@@ -594,12 +593,16 @@
     document.getElementById("buySellApp").value = "";
     document.getElementById("buySellRate").value = "";
     document.getElementById("buySellAmtPreview").textContent = "0";
+    document.getElementById("buySellBrokeragePreview").textContent = "0";
   }
 
   function recalcBuySellAmt() {
     const a = Number(document.getElementById("buySellApp").value || 0);
     const r = Number(document.getElementById("buySellRate").value || 0);
-    document.getElementById("buySellAmtPreview").textContent = fmt(a * r);
+    const buyRate = Number(document.getElementById("buyRate").value || 0);
+    const sellAmt = a * r;
+    document.getElementById("buySellAmtPreview").textContent = fmt(sellAmt);
+    document.getElementById("buySellBrokeragePreview").textContent = fmt(sellAmt - a * buyRate);
   }
 
   document.getElementById("buySellToggle").addEventListener("click", () => {
@@ -682,7 +685,10 @@
     document.getElementById("buyAmtPreview").textContent = fmt(a * r);
   }
   document.getElementById("buyApp").addEventListener("input", recalcBuy);
-  document.getElementById("buyRate").addEventListener("input", recalcBuy);
+  document.getElementById("buyRate").addEventListener("input", () => {
+    recalcBuy();
+    if (buySellOpen) recalcBuySellAmt();
+  });
 
   document.getElementById("buyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -802,7 +808,9 @@
         ? sells
             .map(
               (s) => `<div class="flex justify-between items-center rounded-lg border border-slate-200 px-3 py-2">
-            <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}</div>
+            <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}
+              <span class="text-emerald-700 font-medium"> · Brokerage ${fmt(s.brokerage ?? 0)}</span>
+            </div>
             <button type="button" class="del-sell text-xs text-red-600" data-id="${TradeSlip.escapeHtml(s.id)}">Remove</button>
           </div>`
             )
@@ -814,8 +822,8 @@
       document.getElementById("sellParty").value = "";
       document.getElementById("sellApp").value = "";
       document.getElementById("sellRate").value = "";
-      document.getElementById("sellDalal").value = "";
       document.getElementById("sellAmtPreview").textContent = "0";
+      document.getElementById("sellBrokeragePreview").textContent = "0";
       document.getElementById("sellError").classList.add("hidden");
       document.getElementById("sellSubmit").disabled = !(payload.remaining_app > 0);
       document.getElementById("detailModal").classList.remove("hidden");
@@ -987,7 +995,11 @@
   function recalcSell() {
     const a = Number(document.getElementById("sellApp").value || 0);
     const r = Number(document.getElementById("sellRate").value || 0);
-    document.getElementById("sellAmtPreview").textContent = fmt(a * r);
+    const buyRate = Number((currentDetail && currentDetail.buy_rate) || 0);
+    const sellAmt = a * r;
+    const buyAmtForSold = a * buyRate;
+    document.getElementById("sellAmtPreview").textContent = fmt(sellAmt);
+    document.getElementById("sellBrokeragePreview").textContent = fmt(sellAmt - buyAmtForSold);
   }
   document.getElementById("sellApp").addEventListener("input", recalcSell);
   document.getElementById("sellRate").addEventListener("input", recalcSell);
@@ -999,14 +1011,12 @@
     const sellBtn = document.getElementById("sellSubmit");
     if (TradeSlip.isButtonLoading(sellBtn)) return;
     const positionId = document.getElementById("sellPositionId").value;
-    const dalalRaw = document.getElementById("sellDalal").value;
     const body = {
       sell_date: document.getElementById("sellDate").value,
       sell_app: Number(document.getElementById("sellApp").value),
       sell_rate: Number(document.getElementById("sellRate").value),
       sell_party: document.getElementById("sellParty").value.trim(),
     };
-    if (dalalRaw !== "") body.dalal = Number(dalalRaw);
     const endLoading = TradeSlip.beginButtonLoading(sellBtn, {
       label: "Recording Sell...",
       progressEl: document.getElementById("sellSaveProgress"),

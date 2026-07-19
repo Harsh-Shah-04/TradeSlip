@@ -1,0 +1,612 @@
+{% extends "base.html" %}
+{% block title %}Allotments · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1600px] mx-auto px-4 py-8{% endblock %}
+{% block content %}
+<header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <div>
+    <h1 class="text-3xl font-bold text-slate-900">Allotments</h1>
+    <p class="text-slate-600 mt-1">Select applicants → apply a bulk action → Save Changes.</p>
+  </div>
+</header>
+
+{% if not is_admin %}
+<section class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">Admin access required to manage allotments.</section>
+{% else %}
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm space-y-3">
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+    <div class="md:col-span-2">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoSelect">IPO</label>
+      <select id="ipoSelect" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+    </div>
+    <div>
+      <button type="button" id="loadApplicantsBtn" class="w-full rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Load Applicants</button>
+    </div>
+    <div>
+      <button type="button" id="reloadBtn" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Refresh</button>
+    </div>
+  </div>
+  <div class="flex flex-wrap gap-2 text-xs" id="countChips"></div>
+  <p id="driftMsg" class="text-sm text-amber-700 hidden"></p>
+  <p id="statusMsg" class="text-sm text-slate-500"></p>
+  <p id="saveProgress" class="text-sm text-slate-500 hidden"></p>
+</section>
+
+<section id="bulkBar" class="hidden mb-4 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 shadow-sm">
+  <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <p class="text-sm font-semibold text-emerald-950"><span id="selectedCount">0</span> selected</p>
+    <div class="flex flex-wrap gap-2">
+      <button type="button" id="bulkAllottedBtn" class="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Mark as Allotted</button>
+      <button type="button" id="bulkNotAllottedBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50">Mark as Not Allotted</button>
+      <button type="button" id="bulkSharesBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50">Set Shares</button>
+      <button type="button" id="bulkSoldBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-500" title="Coming soon" disabled>Mark Sold</button>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+  <div class="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <p class="text-sm text-slate-600">Changes stay on this page until you save.</p>
+    <button type="button" id="saveChangesBtn" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Save Changes</button>
+  </div>
+  <div class="relative">
+    <div id="tableLoading" class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/70">
+      <div class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm">
+        <svg class="h-4 w-4 animate-spin text-emerald-700" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+        <span id="tableLoadingText">Loading…</span>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+          <tr>
+            <th class="px-3 py-2 w-10">
+              <input type="checkbox" id="selectAll" class="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600" aria-label="Select all" />
+            </th>
+            <th class="px-3 py-2">Party</th>
+            <th class="px-3 py-2">Applicant</th>
+            <th class="px-3 py-2">PAN</th>
+            <th class="px-3 py-2">Sub-Cat</th>
+            <th class="px-3 py-2">Status</th>
+            <th class="px-3 py-2 text-right">Shares</th>
+            <th class="px-3 py-2">Sold</th>
+          </tr>
+        </thead>
+        <tbody id="allotBody" class="divide-y divide-slate-100">
+          <tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">Select an IPO, then Load Applicants.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+  <h2 class="text-sm font-semibold text-slate-800 mb-3">Listing price (for later sale)</h2>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="listingPrice">Common listing price</label>
+      <input type="number" id="listingPrice" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <button type="button" id="saveListingPriceBtn" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50">Save listing price</button>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if is_admin %}
+<script>
+  let ipos = [];
+  let current = null;
+  /** @type {Map<string, {status: string, shares_allotted: number}>} */
+  let drafts = new Map();
+  /** @type {Set<string>} */
+  let selectedIds = new Set();
+
+  function fmt(n) {
+    if (n === null || n === undefined || n === "") return "—";
+    return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 4 });
+  }
+
+  function partyName(r) {
+    return (r.applicant && r.applicant.party && r.applicant.party.name) || "—";
+  }
+
+  function rowView(r) {
+    const d = drafts.get(r.id);
+    return {
+      ...r,
+      status: d ? d.status : r.status,
+      shares_allotted: d ? d.shares_allotted : (r.shares_allotted || 0),
+      dirty: !!d,
+    };
+  }
+
+  function setLoading(on, text) {
+    const el = document.getElementById("tableLoading");
+    const label = document.getElementById("tableLoadingText");
+    if (text) label.textContent = text;
+    el.classList.toggle("hidden", !on);
+  }
+
+  function setStatus(msg, kind) {
+    const el = document.getElementById("statusMsg");
+    el.textContent = msg || "";
+    el.className =
+      "text-sm " +
+      (kind === "error" ? "text-red-700" : kind === "success" ? "text-emerald-700" : "text-slate-500");
+  }
+
+  function updateSaveBtn() {
+    const btn = document.getElementById("saveChangesBtn");
+    const n = drafts.size;
+    btn.disabled = n === 0;
+    btn.textContent = n > 0 ? `Save Changes (${n})` : "Save Changes";
+  }
+
+  function updateSelectionUi() {
+    const n = selectedIds.size;
+    document.getElementById("selectedCount").textContent = String(n);
+    document.getElementById("bulkBar").classList.toggle("hidden", n === 0);
+    const boxes = Array.from(document.querySelectorAll(".row-cb"));
+    const selectAll = document.getElementById("selectAll");
+    if (!boxes.length) {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+      return;
+    }
+    const allOn = boxes.every((cb) => selectedIds.has(cb.value));
+    const someOn = boxes.some((cb) => selectedIds.has(cb.value));
+    selectAll.checked = allOn;
+    selectAll.indeterminate = someOn && !allOn;
+  }
+
+  function editableRows() {
+    return (current && current.allotments ? current.allotments : []).filter((r) => !r.is_sold);
+  }
+
+  function selectedEditable() {
+    return editableRows().filter((r) => selectedIds.has(r.id));
+  }
+
+  function applyDraft(id, patch) {
+    const base = (current.allotments || []).find((r) => r.id === id);
+    if (!base || base.is_sold) return;
+    const prev = drafts.get(id) || {
+      status: base.status,
+      shares_allotted: Number(base.shares_allotted || 0),
+    };
+    const next = { ...prev, ...patch };
+    const unchanged =
+      next.status === base.status &&
+      Number(next.shares_allotted) === Number(base.shares_allotted || 0);
+    if (unchanged) drafts.delete(id);
+    else drafts.set(id, next);
+  }
+
+  async function loadIpos() {
+    const response = await TradeSlip.apiFetch("/api/ipo/master?include_archived=false");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    ipos = payload.ipos || [];
+    const sel = document.getElementById("ipoSelect");
+    sel.innerHTML =
+      ipos
+        .map(
+          (i) =>
+            `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)} (${TradeSlip.escapeHtml(i.status)})</option>`
+        )
+        .join("") || '<option value="">No IPOs</option>';
+  }
+
+  function render(data) {
+    current = data;
+    drafts.clear();
+    selectedIds.clear();
+    const ipo = data.ipo || {};
+    document.getElementById("listingPrice").value = ipo.listing_price != null ? ipo.listing_price : "";
+    const c = data.counts || {};
+    document.getElementById("countChips").innerHTML = [
+      ["Pending", c.pending],
+      ["Allotted", c.allotted],
+      ["Not Allotted", c.not_allotted],
+      ["Sold", c.sold],
+      ["Total", c.total],
+    ]
+      .map(
+        ([label, n]) =>
+          `<span class="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">${label}: ${n || 0}</span>`
+      )
+      .join("");
+
+    const drift = data.drift || {};
+    const driftEl = document.getElementById("driftMsg");
+    const missing = drift.missing_count || 0;
+    if (missing > 0) {
+      driftEl.classList.remove("hidden");
+      driftEl.innerHTML = `<strong>${missing} allocated applicant(s)</strong> are not on this sheet yet. Click <strong>Load Applicants</strong> to bring them in.`;
+    } else {
+      driftEl.classList.add("hidden");
+      driftEl.textContent = "";
+    }
+
+    const rows = (data.allotments || []).slice().sort((a, b) => {
+      const pa = partyName(a).localeCompare(partyName(b));
+      if (pa !== 0) return pa;
+      const na = ((a.applicant && a.applicant.name) || "").localeCompare(
+        (b.applicant && b.applicant.name) || ""
+      );
+      if (na !== 0) return na;
+      return (a.sub_category || "").localeCompare(b.sub_category || "");
+    });
+
+    const body = document.getElementById("allotBody");
+    if (!rows.length) {
+      body.innerHTML =
+        missing > 0
+          ? `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-600">
+              <p class="font-semibold text-slate-800 mb-1">No applicants loaded yet</p>
+              <p class="text-sm">You have <strong>${missing}</strong> allocated applicant(s) on Positions.</p>
+              <p class="text-sm mt-1">Click <strong>Load Applicants</strong> to show them here.</p>
+            </td></tr>`
+          : '<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">No fully allocated positions for this IPO yet. Allocate applicants on Positions first.</td></tr>';
+      updateSaveBtn();
+      updateSelectionUi();
+      return;
+    }
+
+    let lastParty = null;
+    const html = [];
+    rows.forEach((raw) => {
+      const r = rowView(raw);
+      const party = partyName(raw);
+      if (party !== lastParty) {
+        lastParty = party;
+        const partyRows = rows.filter((x) => partyName(x) === party);
+        html.push(`<tr class="bg-emerald-50/80">
+          <td colspan="8" class="px-3 py-2 font-semibold text-emerald-950">
+            ${TradeSlip.escapeHtml(party)}
+            <span class="ml-2 text-xs font-medium text-emerald-800">${partyRows.length} applicant(s)</span>
+          </td>
+        </tr>`);
+      }
+      const name = (raw.applicant && raw.applicant.name) || "—";
+      const pan = (raw.applicant && raw.applicant.pan) || "—";
+      const soldLabel = raw.is_sold ? `<span class="text-emerald-700 font-medium">Yes · ${fmt(raw.sold_price)}</span>` : "—";
+      const dirty = r.dirty
+        ? ' <span class="text-[10px] uppercase tracking-wide text-amber-700 font-semibold">edited</span>'
+        : "";
+      const disabledCb = raw.is_sold ? "disabled" : "";
+      const checked = selectedIds.has(raw.id) ? "checked" : "";
+      const statusClass =
+        r.status === "Allotted"
+          ? "bg-emerald-100 text-emerald-900"
+          : r.status === "Not Allotted"
+            ? "bg-slate-100 text-slate-700"
+            : "bg-amber-100 text-amber-900";
+      html.push(`<tr class="hover:bg-slate-50 ${r.dirty ? "bg-amber-50/40" : ""}" data-id="${TradeSlip.escapeHtml(raw.id)}">
+        <td class="px-3 py-2">
+          <input type="checkbox" class="row-cb h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600" value="${TradeSlip.escapeHtml(raw.id)}" ${checked} ${disabledCb} />
+        </td>
+        <td class="px-3 py-2 text-slate-500 text-xs">${TradeSlip.escapeHtml(party)}</td>
+        <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(name)}${dirty}</td>
+        <td class="px-3 py-2">${TradeSlip.escapeHtml(pan)}</td>
+        <td class="px-3 py-2">${TradeSlip.escapeHtml(raw.sub_category || "—")}</td>
+        <td class="px-3 py-2"><span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass}">${TradeSlip.escapeHtml(r.status)}</span></td>
+        <td class="px-3 py-2 text-right font-medium">${fmt(r.shares_allotted)}</td>
+        <td class="px-3 py-2">${soldLabel}</td>
+      </tr>`);
+    });
+    body.innerHTML = html.join("");
+
+    body.querySelectorAll(".row-cb").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        if (cb.checked) selectedIds.add(cb.value);
+        else selectedIds.delete(cb.value);
+        updateSelectionUi();
+      });
+    });
+    updateSaveBtn();
+    updateSelectionUi();
+  }
+
+  function rerenderKeepingDrafts() {
+    if (!current) return;
+    const savedDrafts = new Map(drafts);
+    const savedSelected = new Set(selectedIds);
+    const data = current;
+    current = data;
+    drafts = savedDrafts;
+    selectedIds = savedSelected;
+
+    const rows = (data.allotments || []).slice().sort((a, b) => {
+      const pa = partyName(a).localeCompare(partyName(b));
+      if (pa !== 0) return pa;
+      const na = ((a.applicant && a.applicant.name) || "").localeCompare(
+        (b.applicant && b.applicant.name) || ""
+      );
+      if (na !== 0) return na;
+      return (a.sub_category || "").localeCompare(b.sub_category || "");
+    });
+    const body = document.getElementById("allotBody");
+    let lastParty = null;
+    const html = [];
+    rows.forEach((raw) => {
+      const r = rowView(raw);
+      const party = partyName(raw);
+      if (party !== lastParty) {
+        lastParty = party;
+        const partyRows = rows.filter((x) => partyName(x) === party);
+        html.push(`<tr class="bg-emerald-50/80">
+          <td colspan="8" class="px-3 py-2 font-semibold text-emerald-950">
+            ${TradeSlip.escapeHtml(party)}
+            <span class="ml-2 text-xs font-medium text-emerald-800">${partyRows.length} applicant(s)</span>
+          </td>
+        </tr>`);
+      }
+      const name = (raw.applicant && raw.applicant.name) || "—";
+      const pan = (raw.applicant && raw.applicant.pan) || "—";
+      const soldLabel = raw.is_sold ? `<span class="text-emerald-700 font-medium">Yes · ${fmt(raw.sold_price)}</span>` : "—";
+      const dirty = r.dirty
+        ? ' <span class="text-[10px] uppercase tracking-wide text-amber-700 font-semibold">edited</span>'
+        : "";
+      const disabledCb = raw.is_sold ? "disabled" : "";
+      const checked = selectedIds.has(raw.id) ? "checked" : "";
+      const statusClass =
+        r.status === "Allotted"
+          ? "bg-emerald-100 text-emerald-900"
+          : r.status === "Not Allotted"
+            ? "bg-slate-100 text-slate-700"
+            : "bg-amber-100 text-amber-900";
+      html.push(`<tr class="hover:bg-slate-50 ${r.dirty ? "bg-amber-50/40" : ""}" data-id="${TradeSlip.escapeHtml(raw.id)}">
+        <td class="px-3 py-2">
+          <input type="checkbox" class="row-cb h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600" value="${TradeSlip.escapeHtml(raw.id)}" ${checked} ${disabledCb} />
+        </td>
+        <td class="px-3 py-2 text-slate-500 text-xs">${TradeSlip.escapeHtml(party)}</td>
+        <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(name)}${dirty}</td>
+        <td class="px-3 py-2">${TradeSlip.escapeHtml(pan)}</td>
+        <td class="px-3 py-2">${TradeSlip.escapeHtml(raw.sub_category || "—")}</td>
+        <td class="px-3 py-2"><span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass}">${TradeSlip.escapeHtml(r.status)}</span></td>
+        <td class="px-3 py-2 text-right font-medium">${fmt(r.shares_allotted)}</td>
+        <td class="px-3 py-2">${soldLabel}</td>
+      </tr>`);
+    });
+    body.innerHTML = html.join("");
+    body.querySelectorAll(".row-cb").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        if (cb.checked) selectedIds.add(cb.value);
+        else selectedIds.delete(cb.value);
+        updateSelectionUi();
+      });
+    });
+    updateSaveBtn();
+    updateSelectionUi();
+  }
+
+  async function reload() {
+    const ipoId = document.getElementById("ipoSelect").value;
+    if (!ipoId) return;
+    if (drafts.size > 0 && !confirm("You have unsaved changes. Refresh and discard them?")) return;
+    setLoading(true, "Loading applicants…");
+    setStatus("Loading…");
+    try {
+      const response = await TradeSlip.apiFetch(`/api/ipo/allotments?ipo_id=${encodeURIComponent(ipoId)}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      render(payload);
+      setStatus(`${(payload.allotments || []).length} applicant(s)`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  document.getElementById("selectAll").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    editableRows().forEach((r) => {
+      if (on) selectedIds.add(r.id);
+      else selectedIds.delete(r.id);
+    });
+    document.querySelectorAll(".row-cb:not(:disabled)").forEach((cb) => {
+      cb.checked = on;
+    });
+    updateSelectionUi();
+  });
+
+  document.getElementById("bulkAllottedBtn").addEventListener("click", () => {
+    const rows = selectedEditable();
+    if (!rows.length) {
+      alert("Select at least one applicant.");
+      return;
+    }
+    let shares = null;
+    const needShares = rows.some((r) => {
+      const v = rowView(r);
+      return !(Number(v.shares_allotted) > 0);
+    });
+    if (needShares) {
+      const raw = prompt("Enter shares allotted for the selected applicants:", "1");
+      if (raw === null) return;
+      shares = Number(raw);
+      if (!Number.isFinite(shares) || shares <= 0) {
+        alert("Shares must be a number greater than 0.");
+        return;
+      }
+    }
+    rows.forEach((r) => {
+      const v = rowView(r);
+      applyDraft(r.id, {
+        status: "Allotted",
+        shares_allotted: shares != null ? shares : Number(v.shares_allotted),
+      });
+    });
+    rerenderKeepingDrafts();
+    setStatus(`Marked ${rows.length} as Allotted (not saved yet).`, "success");
+  });
+
+  document.getElementById("bulkNotAllottedBtn").addEventListener("click", () => {
+    const rows = selectedEditable();
+    if (!rows.length) {
+      alert("Select at least one applicant.");
+      return;
+    }
+    rows.forEach((r) => applyDraft(r.id, { status: "Not Allotted", shares_allotted: 0 }));
+    rerenderKeepingDrafts();
+    setStatus(`Marked ${rows.length} as Not Allotted (not saved yet).`, "success");
+  });
+
+  document.getElementById("bulkSharesBtn").addEventListener("click", () => {
+    const rows = selectedEditable();
+    if (!rows.length) {
+      alert("Select at least one applicant.");
+      return;
+    }
+    const raw = prompt("Set shares for selected applicants:", "1");
+    if (raw === null) return;
+    const shares = Number(raw);
+    if (!Number.isFinite(shares) || shares < 0) {
+      alert("Enter a valid share count (0 or more).");
+      return;
+    }
+    rows.forEach((r) => {
+      const status = shares > 0 ? "Allotted" : "Not Allotted";
+      applyDraft(r.id, { status, shares_allotted: shares });
+    });
+    rerenderKeepingDrafts();
+    setStatus(`Updated shares for ${rows.length} applicant(s) (not saved yet).`, "success");
+  });
+
+  document.getElementById("saveChangesBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("saveChangesBtn");
+    if (TradeSlip.isButtonLoading(btn) || drafts.size === 0) return;
+    const updates = Array.from(drafts.entries()).map(([id, d]) => ({
+      id,
+      status: d.status,
+      shares_allotted: Number(d.shares_allotted),
+    }));
+    const endLoading = TradeSlip.beginButtonLoading(btn, {
+      label: "Saving…",
+      progressEl: document.getElementById("saveProgress"),
+      slowMessage: "Still saving… please wait.",
+    });
+    setLoading(true, "Saving changes…");
+    try {
+      const response = await TradeSlip.apiFetch("/api/ipo/allotments/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      render(payload);
+      const errN = (payload.errors || []).length;
+      setStatus(
+        errN
+          ? `Saved ${payload.updated || 0}; ${errN} could not be saved.`
+          : `Saved ${payload.updated || 0} change(s).`,
+        errN ? "error" : "success"
+      );
+      if (errN) alert((payload.errors || []).slice(0, 5).join("\n"));
+    } catch (e) {
+      setStatus(e.message, "error");
+      alert(e.message);
+    } finally {
+      endLoading();
+      setLoading(false);
+      updateSaveBtn();
+    }
+  });
+
+  document.getElementById("loadApplicantsBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("loadApplicantsBtn");
+    if (TradeSlip.isButtonLoading(btn)) return;
+    const ipo_id = document.getElementById("ipoSelect").value;
+    if (!ipo_id) return;
+    if (drafts.size > 0 && !confirm("You have unsaved changes. Load applicants and discard them?")) return;
+    const missing = (current && current.drift && current.drift.missing_count) || 0;
+    const msg =
+      missing > 0
+        ? `Load ${missing} applicant(s) from Positions allocations?`
+        : "Load any missing applicants from Positions? Existing rows stay as they are.";
+    if (!confirm(msg)) return;
+    const endLoading = TradeSlip.beginButtonLoading(btn, {
+      label: "Loading…",
+      progressEl: document.getElementById("saveProgress"),
+      slowMessage: "Still loading applicants… please wait.",
+    });
+    setLoading(true, "Loading applicants…");
+    TradeSlip.showProgress("Loading applicants…", "Pulling allocated people from Positions.");
+    try {
+      const response = await TradeSlip.apiFetch("/api/ipo/allotments/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ipo_id }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      render(payload);
+      const n = payload.seeded || 0;
+      setStatus(
+        n > 0
+          ? `Loaded ${n} new applicant(s). ${(payload.allotments || []).length} total.`
+          : `Already up to date. ${(payload.allotments || []).length} applicant(s).`,
+        "success"
+      );
+    } catch (e) {
+      setStatus(e.message, "error");
+      alert(e.message);
+    } finally {
+      endLoading();
+      setLoading(false);
+      TradeSlip.hideProgress();
+    }
+  });
+
+  document.getElementById("reloadBtn").addEventListener("click", () =>
+    reload().catch((e) => {
+      setStatus(e.message, "error");
+      alert(e.message);
+    })
+  );
+  document.getElementById("ipoSelect").addEventListener("change", () =>
+    reload().catch((e) => {
+      setStatus(e.message, "error");
+      alert(e.message);
+    })
+  );
+
+  document.getElementById("saveListingPriceBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("saveListingPriceBtn");
+    if (TradeSlip.isButtonLoading(btn)) return;
+    const ipo_id = document.getElementById("ipoSelect").value;
+    const raw = document.getElementById("listingPrice").value.trim();
+    const body = raw === "" ? { clear_listing_price: true } : { listing_price: Number(raw) };
+    const endLoading = TradeSlip.beginButtonLoading(btn, { label: "Saving…" });
+    try {
+      const response = await TradeSlip.apiFetch(`/api/ipo/master/${encodeURIComponent(ipo_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      setStatus("Listing price saved.", "success");
+      await reload();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      endLoading();
+    }
+  });
+
+  setLoading(true, "Loading…");
+  loadIpos()
+    .then(() => reload())
+    .catch((e) => setStatus(e.message, "error"))
+    .finally(() => setLoading(false));
+</script>
+{% endif %}
+{% endblock %}
