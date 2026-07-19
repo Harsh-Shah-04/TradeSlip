@@ -138,6 +138,40 @@ def category_group_for(label: str) -> str | None:
     return mapping.get(sub)
 
 
+# Sub-Category → IPO Master amount field (application amount defaults)
+SUB_CATEGORY_AMOUNT_FIELD: dict[str, str] = {
+    "10+": "amount_bhni",
+    "2+": "amount_shni",
+    "15K": "amount_retail",
+    "2-": "amount_retail",
+    "15K Shareholder": "amount_shareholder",
+    "2- Shareholder": "amount_shareholder",
+}
+
+
+def amount_field_for_sub_category(sub_category: str | None) -> str | None:
+    sub = normalize_sub_category(sub_category)
+    return SUB_CATEGORY_AMOUNT_FIELD.get(sub)
+
+
+def application_amount_from_ipo(
+    ipo: dict | None, sub_category: str | None
+) -> float | None:
+    """Resolve configured IPO application amount for a Sub-Category."""
+    if not ipo:
+        return None
+    field = amount_field_for_sub_category(sub_category)
+    if not field:
+        return None
+    raw = ipo.get(field)
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_mail(value: str | None) -> str:
     raw = (value or "").strip()
     if not raw:

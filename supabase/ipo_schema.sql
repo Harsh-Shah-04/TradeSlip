@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS ipo_master (
   status TEXT NOT NULL DEFAULT 'Upcoming'
     CHECK (status IN ('Upcoming', 'Active', 'Closed')),
   notes TEXT NOT NULL DEFAULT '',
+  -- Default application amounts (configured once per IPO)
+  amount_bhni NUMERIC(18, 4),          -- bHNI → Sub-Category 10+
+  amount_shni NUMERIC(18, 4),          -- sHNI → Sub-Category 2+
+  amount_retail NUMERIC(18, 4),        -- Retail → 15K, 2-
+  amount_shareholder NUMERIC(18, 4),   -- Shareholder → 15K Shareholder, 2- Shareholder
   is_archived BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

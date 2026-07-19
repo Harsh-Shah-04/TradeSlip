@@ -43,7 +43,7 @@
 </section>
 
 <div id="ipoFormModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-  <div class="w-full max-w-lg rounded-2xl bg-white border p-6 shadow-2xl">
+  <div class="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white border p-6 shadow-2xl">
     <h3 id="ipoFormTitle" class="text-xl font-semibold mb-4">Add IPO</h3>
     <form id="ipoMasterForm" class="space-y-3">
       <input type="hidden" id="ipoEditId" />
@@ -77,6 +77,30 @@
           <option value="Closed">Closed</option>
         </select>
       </div>
+
+      <fieldset class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-3">
+        <legend class="px-1 text-sm font-semibold text-slate-800">IPO Application Amounts</legend>
+        <p class="text-xs text-slate-500">Configure once per IPO. Buy trades auto-fill Application Amount from Sub-Category.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1" for="ipoAmtBhni">bHNI (10+)</label>
+            <input type="number" id="ipoAmtBhni" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 1492400" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1" for="ipoAmtShni">sHNI (2+)</label>
+            <input type="number" id="ipoAmtShni" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 298800" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1" for="ipoAmtRetail">Retail <span class="font-normal text-slate-500">(15K / 2-)</span></label>
+            <input type="number" id="ipoAmtRetail" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1" for="ipoAmtShareholder">Shareholder <span class="font-normal text-slate-500">(15K / 2- SH)</span></label>
+            <input type="number" id="ipoAmtShareholder" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" placeholder="e.g. 14924" />
+          </div>
+        </div>
+      </fieldset>
+
       <div>
         <label class="block text-sm font-medium mb-1" for="ipoNotes">Notes</label>
         <textarea id="ipoNotes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2"></textarea>
@@ -182,6 +206,13 @@
     });
   }
 
+  function amountValue(id) {
+    const raw = document.getElementById(id).value.trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function openForm(item) {
     document.getElementById("ipoFormError").classList.add("hidden");
     document.getElementById("ipoEditId").value = item ? item.id : "";
@@ -193,6 +224,10 @@
     document.getElementById("ipoListing").value = item && item.listing_date ? item.listing_date : "";
     document.getElementById("ipoStatus").value = item ? item.status : "Upcoming";
     document.getElementById("ipoNotes").value = item ? item.notes || "" : "";
+    document.getElementById("ipoAmtBhni").value = item && item.amount_bhni != null ? item.amount_bhni : "";
+    document.getElementById("ipoAmtShni").value = item && item.amount_shni != null ? item.amount_shni : "";
+    document.getElementById("ipoAmtRetail").value = item && item.amount_retail != null ? item.amount_retail : "";
+    document.getElementById("ipoAmtShareholder").value = item && item.amount_shareholder != null ? item.amount_shareholder : "";
     document.getElementById("ipoFormModal").classList.remove("hidden");
   }
 
@@ -227,6 +262,10 @@
       const err = document.getElementById("ipoFormError");
       err.classList.add("hidden");
       const editId = document.getElementById("ipoEditId").value;
+      const amountBhni = amountValue("ipoAmtBhni");
+      const amountShni = amountValue("ipoAmtShni");
+      const amountRetail = amountValue("ipoAmtRetail");
+      const amountShareholder = amountValue("ipoAmtShareholder");
       const body = {
         name: document.getElementById("ipoName").value.trim(),
         display_name: document.getElementById("ipoDisplay").value.trim(),
@@ -235,7 +274,17 @@
         listing_date: document.getElementById("ipoListing").value || null,
         status: document.getElementById("ipoStatus").value,
         notes: document.getElementById("ipoNotes").value.trim(),
+        amount_bhni: amountBhni,
+        amount_shni: amountShni,
+        amount_retail: amountRetail,
+        amount_shareholder: amountShareholder,
       };
+      if (editId) {
+        body.clear_amount_bhni = amountBhni === null;
+        body.clear_amount_shni = amountShni === null;
+        body.clear_amount_retail = amountRetail === null;
+        body.clear_amount_shareholder = amountShareholder === null;
+      }
       TradeSlip.showProgress("Saving…", "Updating IPO Master.");
       try {
         const response = await TradeSlip.apiFetch(editId ? `/api/ipo/master/${encodeURIComponent(editId)}` : "/api/ipo/master", {

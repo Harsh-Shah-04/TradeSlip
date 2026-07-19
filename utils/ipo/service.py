@@ -6,7 +6,12 @@ from typing import Any
 
 import httpx
 
-from utils.ipo.categories import category_group_for, is_premium, validate_category_pair
+from utils.ipo.categories import (
+    application_amount_from_ipo,
+    category_group_for,
+    is_premium,
+    validate_category_pair,
+)
 from utils.ipo.clients import get_applicant, get_party
 from utils.ipo.models import (
     AllocationSet,
@@ -151,6 +156,10 @@ def create_ipo(payload: IpoMasterCreate) -> dict[str, Any]:
         "listing_date": payload.listing_date or None,
         "status": payload.status,
         "notes": payload.notes or "",
+        "amount_bhni": payload.amount_bhni,
+        "amount_shni": payload.amount_shni,
+        "amount_retail": payload.amount_retail,
+        "amount_shareholder": payload.amount_shareholder,
         "is_archived": False,
         "updated_at": _now(),
     }
@@ -186,6 +195,22 @@ def update_ipo(ipo_id: str, payload: IpoMasterUpdate) -> dict[str, Any]:
         patch["status"] = payload.status
     if payload.notes is not None:
         patch["notes"] = payload.notes
+    if payload.clear_amount_bhni:
+        patch["amount_bhni"] = None
+    elif payload.amount_bhni is not None:
+        patch["amount_bhni"] = payload.amount_bhni
+    if payload.clear_amount_shni:
+        patch["amount_shni"] = None
+    elif payload.amount_shni is not None:
+        patch["amount_shni"] = payload.amount_shni
+    if payload.clear_amount_retail:
+        patch["amount_retail"] = None
+    elif payload.amount_retail is not None:
+        patch["amount_retail"] = payload.amount_retail
+    if payload.clear_amount_shareholder:
+        patch["amount_shareholder"] = None
+    elif payload.amount_shareholder is not None:
+        patch["amount_shareholder"] = payload.amount_shareholder
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
@@ -439,10 +464,17 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         raise ValueError("Selected party is not Active.")
     party_name = party.get("name") or ""
 
-    buy_amt = (_money(payload.buy_app) * _money(payload.buy_rate)).quantize(
+    category, sub_category = validate_category_pair(payload.category, payload.sub_category)
+    buy_rate = float(_money(payload.buy_rate))
+    # Prefer IPO Master application amount for application-style sub-categories
+    if not is_premium(category):
+        configured = application_amount_from_ipo(ipo, sub_category)
+        if configured is not None:
+            buy_rate = float(_money(configured))
+
+    buy_amt = (_money(payload.buy_app) * _money(buy_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
-    category, sub_category = validate_category_pair(payload.category, payload.sub_category)
     row = {
         "broker_id": broker_id,
         "ipo_id": payload.ipo_id,
@@ -455,7 +487,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "applicant_id": None,
         "applicant_name": "",
         "buy_app": float(_money(payload.buy_app)),
-        "buy_rate": float(_money(payload.buy_rate)),
+        "buy_rate": buy_rate,
         "buy_amt": float(buy_amt),
         "updated_at": _now(),
     }
@@ -540,16 +572,12 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         )
 
     ipo_id = payload.ipo_id or existing["ipo_id"]
-    ipo = existing.get("ipo")
+    ipo = get_ipo(ipo_id, include_trade_count=False)
     if payload.ipo_id and payload.ipo_id != existing["ipo_id"]:
-        ipo = get_ipo(payload.ipo_id, include_trade_count=False)
         if ipo.get("is_archived"):
             raise ValueError("Cannot move trade to an archived IPO.")
         if ipo.get("status") != "Active":
             raise ValueError("Select an Active IPO when changing the IPO.")
-
-    buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
-    buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     category = existing["category"]
     sub_category = existing.get("sub_category") or ""
@@ -560,6 +588,13 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
             if payload.sub_category is not None
             else (existing.get("sub_category") or ""),
         )
+
+    buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
+    if not is_premium(category):
+        configured = application_amount_from_ipo(ipo, sub_category)
+        if configured is not None:
+            buy_rate = configured
+    buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     party_id = existing.get("party_id")
     party_name = existing["party"]

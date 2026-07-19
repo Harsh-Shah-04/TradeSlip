@@ -17,6 +17,10 @@ class IpoMasterCreate(BaseModel):
     listing_date: str | None = None
     status: str = Field(default="Upcoming")
     notes: str = Field(default="", max_length=2000)
+    amount_bhni: float | None = Field(default=None, ge=0)
+    amount_shni: float | None = Field(default=None, ge=0)
+    amount_retail: float | None = Field(default=None, ge=0)
+    amount_shareholder: float | None = Field(default=None, ge=0)
 
     @field_validator("status")
     @classmethod
@@ -39,6 +43,14 @@ class IpoMasterUpdate(BaseModel):
     listing_date: str | None = None
     status: str | None = None
     notes: str | None = Field(default=None, max_length=2000)
+    amount_bhni: float | None = Field(default=None, ge=0)
+    amount_shni: float | None = Field(default=None, ge=0)
+    amount_retail: float | None = Field(default=None, ge=0)
+    amount_shareholder: float | None = Field(default=None, ge=0)
+    clear_amount_bhni: bool = False
+    clear_amount_shni: bool = False
+    clear_amount_retail: bool = False
+    clear_amount_shareholder: bool = False
     is_archived: bool | None = None
 
     @field_validator("status")
@@ -252,6 +264,15 @@ def _iso(value: Any) -> Any:
     return value
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def master_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> dict[str, Any]:
     payload = {
         "id": str(row.get("id") or ""),
@@ -262,6 +283,10 @@ def master_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> di
         "listing_date": _iso(row.get("listing_date")),
         "status": row.get("status"),
         "notes": row.get("notes") or "",
+        "amount_bhni": _optional_float(row.get("amount_bhni")),
+        "amount_shni": _optional_float(row.get("amount_shni")),
+        "amount_retail": _optional_float(row.get("amount_retail")),
+        "amount_shareholder": _optional_float(row.get("amount_shareholder")),
         "is_archived": bool(row.get("is_archived", False)),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
