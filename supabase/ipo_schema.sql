@@ -1,6 +1,69 @@
--- IPO Trading Module (Phase 1)
--- Run in Supabase SQL editor or via migration tooling.
+-- IPO Trading Module v2 — business entities (IPO Master → Positions → Sells)
+-- Replaces the Phase-1 single-row buy+sell Excel model.
 
+CREATE TABLE IF NOT EXISTS ipo_master (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  open_date DATE,
+  close_date DATE,
+  listing_date DATE,
+  status TEXT NOT NULL DEFAULT 'Upcoming'
+    CHECK (status IN ('Upcoming', 'Active', 'Closed')),
+  notes TEXT NOT NULL DEFAULT '',
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ipo_master_status
+  ON ipo_master (status)
+  WHERE is_archived = FALSE;
+
+CREATE TABLE IF NOT EXISTS ipo_positions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  broker_id UUID NOT NULL REFERENCES brokers (id),
+  ipo_id UUID NOT NULL REFERENCES ipo_master (id),
+  trade_date DATE NOT NULL,
+  party TEXT NOT NULL,
+  category TEXT NOT NULL,
+  category_group TEXT,
+  applicant_name TEXT NOT NULL DEFAULT '',
+  buy_app NUMERIC(18, 4) NOT NULL CHECK (buy_app > 0),
+  buy_rate NUMERIC(18, 4) NOT NULL CHECK (buy_rate >= 0),
+  buy_amt NUMERIC(18, 4) NOT NULL CHECK (buy_amt >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ipo_positions_broker_date
+  ON ipo_positions (broker_id, trade_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ipo_positions_broker_ipo
+  ON ipo_positions (broker_id, ipo_id);
+CREATE INDEX IF NOT EXISTS idx_ipo_positions_broker_party
+  ON ipo_positions (broker_id, party);
+
+CREATE TABLE IF NOT EXISTS ipo_sells (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  broker_id UUID NOT NULL REFERENCES brokers (id),
+  position_id UUID NOT NULL REFERENCES ipo_positions (id) ON DELETE CASCADE,
+  sell_date DATE NOT NULL,
+  sell_app NUMERIC(18, 4) NOT NULL CHECK (sell_app > 0),
+  sell_rate NUMERIC(18, 4) NOT NULL CHECK (sell_rate >= 0),
+  sell_amt NUMERIC(18, 4) NOT NULL CHECK (sell_amt >= 0),
+  sell_party TEXT NOT NULL,
+  dalal NUMERIC(18, 4),
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ipo_sells_position
+  ON ipo_sells (position_id);
+CREATE INDEX IF NOT EXISTS idx_ipo_sells_broker_date
+  ON ipo_sells (broker_id, sell_date DESC);
+
+-- Keep category labels from Phase 1 if present; recreate seed if needed
 CREATE TABLE IF NOT EXISTS ipo_category_labels (
   code TEXT PRIMARY KEY,
   category_group TEXT CHECK (
@@ -11,38 +74,6 @@ CREATE TABLE IF NOT EXISTS ipo_category_labels (
   is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE IF NOT EXISTS ipo_trades (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  broker_id UUID NOT NULL REFERENCES brokers (id),
-  trade_date DATE NOT NULL,
-  script TEXT NOT NULL,
-  party TEXT NOT NULL,
-  category TEXT NOT NULL,
-  category_group TEXT,
-  buy_app NUMERIC(18, 4) NOT NULL CHECK (buy_app >= 0),
-  buy_rate NUMERIC(18, 4) NOT NULL CHECK (buy_rate >= 0),
-  buy_amt NUMERIC(18, 4) NOT NULL CHECK (buy_amt >= 0),
-  dalal NUMERIC(18, 4),
-  sell_app NUMERIC(18, 4) NOT NULL CHECK (sell_app >= 0),
-  sell_rate NUMERIC(18, 4) NOT NULL CHECK (sell_rate >= 0),
-  sell_amt NUMERIC(18, 4) NOT NULL CHECK (sell_amt >= 0),
-  sell_party TEXT NOT NULL,
-  applicant_name TEXT NOT NULL DEFAULT '',
-  mail TEXT NOT NULL DEFAULT 'Pending',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_ipo_trades_broker_date
-  ON ipo_trades (broker_id, trade_date DESC);
-CREATE INDEX IF NOT EXISTS idx_ipo_trades_broker_script
-  ON ipo_trades (broker_id, script);
-CREATE INDEX IF NOT EXISTS idx_ipo_trades_broker_party
-  ON ipo_trades (broker_id, party);
-CREATE INDEX IF NOT EXISTS idx_ipo_trades_broker_sell_party
-  ON ipo_trades (broker_id, sell_party);
-
--- Seed Excel shorthand labels + parent groups (future Category / Sub-Category)
 INSERT INTO ipo_category_labels (code, category_group, display_order, is_active) VALUES
   ('15K', 'Retail', 10, TRUE),
   ('2-SHARE', 'Retail', 20, TRUE),
@@ -62,3 +93,7 @@ SET
   category_group = EXCLUDED.category_group,
   display_order = EXCLUDED.display_order,
   is_active = EXCLUDED.is_active;
+
+-- Legacy Phase-1 flat table (ipo_trades) is no longer used by the app.
+-- Keep it for safety; drop manually later after confirming no needed data:
+-- DROP TABLE IF EXISTS ipo_trades;

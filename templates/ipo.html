@@ -1,321 +1,269 @@
 {% extends "base.html" %}
-{% block title %}IPO Trading · TradeSlip{% endblock %}
-{% block main_class %}max-w-[1600px] mx-auto px-4 py-8{% endblock %}
+{% block title %}Positions · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1400px] mx-auto px-4 py-8{% endblock %}
 {% block content %}
-<header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+<header class="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
   <div>
-    <h1 class="text-3xl font-bold text-slate-900">IPO Trading</h1>
-    <p class="text-slate-600 mt-1">Excel workflow digitized — one row is one IPO trade. BUY AMT and SELL AMT calculate automatically.</p>
+    <h1 class="text-3xl font-bold text-slate-900">Positions</h1>
+    <p class="text-slate-600 mt-1">Record buys first. Add sells later — including partial sells — until the position is Closed.</p>
   </div>
-  <div class="flex flex-wrap items-center gap-2">
-    <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-      <input type="file" id="ipoCsvInput" accept=".csv,text/csv" class="hidden" />
-      Import CSV
-    </label>
-    <button type="button" id="ipoAddBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Add trade</button>
-  </div>
+  <button type="button" id="addBuyBtn" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Record buy</button>
 </header>
 
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4">
-  <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+  <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
     <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoFrom">From</label>
-      <input type="date" id="ipoFrom" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterIpo">IPO</label>
+      <select id="filterIpo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
     </div>
     <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoTo">To</label>
-      <input type="date" id="ipoTo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoScriptFilter">SCRIPT</label>
-      <input type="text" id="ipoScriptFilter" placeholder="IPO name" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoPartyFilter">PARTY</label>
-      <input type="text" id="ipoPartyFilter" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoCategoryFilter">CATEGORY</label>
-      <input type="text" id="ipoCategoryFilter" list="ipoCategoryOptions" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoSellPartyFilter">SELL PARTY</label>
-      <input type="text" id="ipoSellPartyFilter" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
-    </div>
-  </div>
-  <div class="mt-3 flex flex-wrap items-center gap-3">
-    <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="ipoMailFilter">MAIL</label>
-      <select id="ipoMailFilter" class="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterStatus">Status</label>
+      <select id="filterStatus" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
         <option value="">All</option>
-        <option value="Pending">Pending</option>
-        <option value="Done">Done</option>
+        <option value="Open">Open</option>
+        <option value="Partially Sold">Partially Sold</option>
+        <option value="Closed">Closed</option>
       </select>
     </div>
-    <button type="button" id="ipoApplyFilters" class="mt-5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">Apply</button>
-    <button type="button" id="ipoClearFilters" class="mt-5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Clear</button>
-    <p id="ipoStatus" class="mt-5 text-sm text-slate-500"></p>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">PARTY</label>
+      <input id="filterParty" type="text" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+    </div>
+    <div class="flex items-end gap-2 md:col-span-2">
+      <button type="button" id="applyFilters" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Apply</button>
+      <button type="button" id="clearFilters" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">Clear</button>
+      <p id="posStatus" class="text-sm text-slate-500 ml-2"></p>
+    </div>
   </div>
 </section>
 
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-  <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-    <h2 class="text-lg font-semibold">Trades</h2>
-    <span id="ipoCount" class="text-sm text-slate-500">0 trades</span>
+<section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-200 flex justify-between">
+    <h2 class="font-semibold">Buy positions</h2>
+    <span id="posCount" class="text-sm text-slate-500">0</span>
   </div>
   <div class="overflow-x-auto">
-    <table class="w-full text-left text-xs whitespace-nowrap">
-      <thead class="bg-slate-50 text-slate-600 uppercase tracking-wide">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-slate-50 text-xs uppercase text-slate-600">
         <tr>
-          <th class="px-3 py-2">DATE</th>
-          <th class="px-3 py-2">SCRIPT</th>
-          <th class="px-3 py-2">PARTY</th>
-          <th class="px-3 py-2">CATEGORY</th>
-          <th class="px-3 py-2 text-right">BUY APP</th>
-          <th class="px-3 py-2 text-right">BUY RATE</th>
-          <th class="px-3 py-2 text-right">BUY AMT</th>
-          <th class="px-3 py-2 text-right">DALAL</th>
-          <th class="px-3 py-2 text-right">SELL APP</th>
-          <th class="px-3 py-2 text-right">SELL RATE</th>
-          <th class="px-3 py-2 text-right">SELL AMT</th>
-          <th class="px-3 py-2">SELL PARTY</th>
-          <th class="px-3 py-2">APPLICANT NAME</th>
-          <th class="px-3 py-2">MAIL</th>
+          <th class="px-3 py-2">Date</th>
+          <th class="px-3 py-2">IPO</th>
+          <th class="px-3 py-2">Party</th>
+          <th class="px-3 py-2">Category</th>
+          <th class="px-3 py-2">Applicant</th>
+          <th class="px-3 py-2 text-right">Buy</th>
+          <th class="px-3 py-2 text-right">Sold</th>
+          <th class="px-3 py-2 text-right">Remaining</th>
+          <th class="px-3 py-2">Status</th>
           <th class="px-3 py-2 text-right">Actions</th>
         </tr>
       </thead>
-      <tbody id="ipoBody" class="divide-y divide-slate-100">
-        <tr><td colspan="15" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+      <tbody id="posBody" class="divide-y divide-slate-100">
+        <tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 </section>
 
-<datalist id="ipoCategoryOptions"></datalist>
-
-<div id="ipoModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-  <div class="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl border border-slate-200 p-6">
-    <div class="flex items-start justify-between gap-4 mb-4">
-      <h3 id="ipoModalTitle" class="text-xl font-semibold text-slate-900">Add trade</h3>
-      <button type="button" id="ipoModalClose" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">✕</button>
-    </div>
-    <form id="ipoForm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <input type="hidden" id="ipoEditId" />
+<!-- Buy modal -->
+<div id="buyModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-lg rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl">
+    <h3 class="text-xl font-semibold mb-4">Record buy</h3>
+    <form id="buyForm" class="space-y-3">
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fDate">DATE</label>
-        <input type="date" id="fDate" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        <label class="block text-sm font-medium mb-1" for="buyIpo">Active IPO</label>
+        <select id="buyIpo" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fScript">SCRIPT</label>
-        <input type="text" id="fScript" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        <label class="block text-sm font-medium mb-1" for="buyDate">DATE</label>
+        <input type="date" id="buyDate" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fParty">PARTY</label>
-        <input type="text" id="fParty" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        <label class="block text-sm font-medium mb-1" for="buyParty">PARTY</label>
+        <input type="text" id="buyParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fCategory">CATEGORY</label>
-        <input type="text" id="fCategory" required list="ipoCategoryOptions" maxlength="100" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="e.g. 15K, 2+, 10+, SHARE" />
+        <label class="block text-sm font-medium mb-1" for="buyCategory">CATEGORY</label>
+        <input type="text" id="buyCategory" list="catOptions" required class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="15K, 2+, 10+, SHARE…" />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fBuyApp">BUY APP</label>
-        <input type="number" id="fBuyApp" required min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        <label class="block text-sm font-medium mb-1" for="buyApplicant">APPLICANT NAME</label>
+        <input type="text" id="buyApplicant" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
       </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fBuyRate">BUY RATE</label>
-        <input type="number" id="fBuyRate" required min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1" for="buyApp">BUY APP</label>
+          <input type="number" id="buyApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="buyRate">BUY RATE</label>
+          <input type="number" id="buyRate" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fBuyAmt">BUY AMT</label>
-        <input type="text" id="fBuyAmt" readonly class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fDalal">DALAL <span class="text-slate-400 font-normal">(optional; auto formula later)</span></label>
-        <input type="number" id="fDalal" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fSellApp">SELL APP</label>
-        <input type="number" id="fSellApp" required min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fSellRate">SELL RATE</label>
-        <input type="number" id="fSellRate" required min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fSellAmt">SELL AMT</label>
-        <input type="text" id="fSellAmt" readonly class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fSellParty">SELL PARTY</label>
-        <input type="text" id="fSellParty" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-      </div>
-      <div class="sm:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fApplicant">APPLICANT NAME</label>
-        <input type="text" id="fApplicant" maxlength="500" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="fMail">MAIL</label>
-        <select id="fMail" class="w-full rounded-lg border border-slate-300 px-3 py-2">
-          <option value="Pending">Pending</option>
-          <option value="Done">Done</option>
-        </select>
-      </div>
-      <p id="ipoFormError" class="hidden sm:col-span-2 text-sm text-red-600"></p>
-      <div class="sm:col-span-2 flex justify-end gap-2 pt-2">
-        <button type="button" id="ipoModalCancel" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        <button type="submit" id="ipoSaveBtn" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Save</button>
+      <p class="text-sm text-slate-600">BUY AMT: <span id="buyAmtPreview" class="font-semibold">0</span></p>
+      <p id="buyError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="buyCancel" class="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+        <button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save buy</button>
       </div>
     </form>
   </div>
 </div>
+
+<!-- Detail / sell modal -->
+<div id="detailModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl">
+    <div class="flex justify-between items-start mb-4">
+      <div>
+        <h3 class="text-xl font-semibold" id="detailTitle">Position</h3>
+        <p class="text-sm text-slate-500" id="detailSub"></p>
+      </div>
+      <button type="button" id="detailClose" class="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">✕</button>
+    </div>
+    <div id="detailSummary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4"></div>
+    <h4 class="font-semibold mb-2">Sell transactions</h4>
+    <div id="sellsList" class="space-y-2 mb-4 text-sm"></div>
+    <form id="sellForm" class="border-t border-slate-200 pt-4 space-y-3">
+      <h4 class="font-semibold">Add sell</h4>
+      <input type="hidden" id="sellPositionId" />
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1" for="sellDate">SELL DATE</label>
+          <input type="date" id="sellDate" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="sellParty">SELL PARTY</label>
+          <input type="text" id="sellParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="sellApp">SELL APP</label>
+          <input type="number" id="sellApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="sellRate">SELL RATE</label>
+          <input type="number" id="sellRate" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="sellDalal">DALAL <span class="text-slate-400">(optional)</span></label>
+          <input type="number" id="sellDalal" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">&nbsp;</label>
+          <p class="text-sm text-slate-600 pt-2">SELL AMT: <span id="sellAmtPreview" class="font-semibold">0</span></p>
+        </div>
+      </div>
+      <p id="sellError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2">
+        <button type="submit" id="sellSubmit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save sell</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<datalist id="catOptions"></datalist>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  const ipoBody = document.getElementById("ipoBody");
-  const ipoCount = document.getElementById("ipoCount");
-  const ipoStatus = document.getElementById("ipoStatus");
-  const ipoModal = document.getElementById("ipoModal");
-  const ipoForm = document.getElementById("ipoForm");
-  const ipoFormError = document.getElementById("ipoFormError");
-  const categoryOptions = document.getElementById("ipoCategoryOptions");
+  let positions = [];
+  let activeIpos = [];
+  let currentDetail = null;
 
-  let trades = [];
-  const sellPartyColors = {};
-  const palette = [
-    "bg-sky-50",
-    "bg-amber-50",
-    "bg-orange-50",
-    "bg-emerald-50",
-    "bg-violet-50",
-    "bg-rose-50",
-    "bg-teal-50",
-  ];
+  const posBody = document.getElementById("posBody");
+  const posStatus = document.getElementById("posStatus");
+  const filterIpo = document.getElementById("filterIpo");
 
-  function setStatus(message, tone) {
-    ipoStatus.textContent = message || "";
-    ipoStatus.className =
-      "mt-5 text-sm " +
-      (tone === "error"
-        ? "text-red-600"
-        : tone === "success"
-          ? "text-green-600"
-          : tone === "info"
-            ? "text-blue-600"
-            : "text-slate-500");
+  function setMsg(el, msg, tone) {
+    el.textContent = msg || "";
+    el.className = "text-sm ml-2 " + (tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : "text-slate-500");
   }
 
-  function fmtNum(value) {
-    if (value === null || value === undefined || value === "") return "—";
-    const n = Number(value);
-    if (Number.isNaN(n)) return TradeSlip.escapeHtml(String(value));
-    return n.toLocaleString("en-IN", { maximumFractionDigits: 4 });
+  function fmt(n) {
+    return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 4 });
   }
 
-  function colorForSellParty(name) {
-    const key = (name || "").trim().toUpperCase();
-    if (!key) return "";
-    if (!sellPartyColors[key]) {
-      sellPartyColors[key] = palette[Object.keys(sellPartyColors).length % palette.length];
+  function statusBadge(status) {
+    const colors = {
+      Open: "bg-amber-100 text-amber-800",
+      "Partially Sold": "bg-sky-100 text-sky-800",
+      Closed: "bg-emerald-100 text-emerald-800",
+    };
+    return `<span class="rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] || "bg-slate-100"}">${TradeSlip.escapeHtml(status)}</span>`;
+  }
+
+  async function loadActiveIpos() {
+    const response = await TradeSlip.apiFetch("/api/ipo/master?active_only=true");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    activeIpos = payload.ipos || [];
+    const buySelect = document.getElementById("buyIpo");
+    buySelect.innerHTML = activeIpos.length
+      ? activeIpos.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("")
+      : '<option value="">No Active IPOs — add one in IPO Master</option>';
+    filterIpo.innerHTML =
+      '<option value="">All IPOs</option>' +
+      activeIpos.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("");
+    // Also load all for filter completeness
+    const allRes = await TradeSlip.apiFetch("/api/ipo/master");
+    const allPayload = await allRes.json().catch(() => ({}));
+    if (allRes.ok) {
+      const all = allPayload.ipos || [];
+      filterIpo.innerHTML =
+        '<option value="">All IPOs</option>' +
+        all.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("");
     }
-    return sellPartyColors[key];
   }
 
-  function recalcPreview() {
-    const buyApp = Number(document.getElementById("fBuyApp").value || 0);
-    const buyRate = Number(document.getElementById("fBuyRate").value || 0);
-    const sellApp = Number(document.getElementById("fSellApp").value || 0);
-    const sellRate = Number(document.getElementById("fSellRate").value || 0);
-    document.getElementById("fBuyAmt").value = (buyApp * buyRate).toLocaleString("en-IN", {
-      maximumFractionDigits: 4,
-    });
-    document.getElementById("fSellAmt").value = (sellApp * sellRate).toLocaleString("en-IN", {
-      maximumFractionDigits: 4,
-    });
+  async function loadLabels() {
+    const response = await TradeSlip.apiFetch("/api/ipo/category-labels");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    document.getElementById("catOptions").innerHTML = (payload.labels || [])
+      .map((l) => `<option value="${TradeSlip.escapeHtml(l.code)}"></option>`)
+      .join("");
   }
 
-  ["fBuyApp", "fBuyRate", "fSellApp", "fSellRate"].forEach((id) => {
-    document.getElementById(id).addEventListener("input", recalcPreview);
-  });
-
-  function openModal(trade) {
-    ipoFormError.classList.add("hidden");
-    document.getElementById("ipoEditId").value = trade ? trade.id : "";
-    document.getElementById("ipoModalTitle").textContent = trade ? "Edit trade" : "Add trade";
-    document.getElementById("fDate").value = trade ? trade.trade_date : TradeSlip.todayIso();
-    document.getElementById("fScript").value = trade ? trade.script : "";
-    document.getElementById("fParty").value = trade ? trade.party : "";
-    document.getElementById("fCategory").value = trade ? trade.category : "";
-    document.getElementById("fBuyApp").value = trade ? trade.buy_app : "";
-    document.getElementById("fBuyRate").value = trade ? trade.buy_rate : "";
-    document.getElementById("fDalal").value = trade && trade.dalal != null ? trade.dalal : "";
-    document.getElementById("fSellApp").value = trade ? trade.sell_app : "";
-    document.getElementById("fSellRate").value = trade ? trade.sell_rate : "";
-    document.getElementById("fSellParty").value = trade ? trade.sell_party : "";
-    document.getElementById("fApplicant").value = trade ? trade.applicant_name || "" : "";
-    document.getElementById("fMail").value = trade ? trade.mail || "Pending" : "Pending";
-    recalcPreview();
-    ipoModal.classList.remove("hidden");
-  }
-
-  function closeModal() {
-    ipoModal.classList.add("hidden");
-  }
-
-  function renderTrades() {
-    ipoCount.textContent = `${trades.length} trade${trades.length === 1 ? "" : "s"}`;
-    if (trades.length === 0) {
-      ipoBody.innerHTML =
-        '<tr><td colspan="15" class="px-4 py-8 text-center text-slate-500">No trades yet. Add a row or import your Excel CSV.</td></tr>';
+  function renderPositions() {
+    document.getElementById("posCount").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
+    if (!positions.length) {
+      posBody.innerHTML = '<tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">No positions yet. Record a buy against an Active IPO.</td></tr>';
       return;
     }
-    ipoBody.innerHTML = trades
-      .map((t) => {
-        const rowColor = colorForSellParty(t.sell_party);
-        return `
-        <tr class="hover:bg-slate-50/80 ${rowColor}" data-id="${TradeSlip.escapeHtml(t.id)}">
-          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(t.trade_date)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(t.script)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(t.party)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(t.category)}</td>
-          <td class="px-3 py-2 text-right">${fmtNum(t.buy_app)}</td>
-          <td class="px-3 py-2 text-right">${fmtNum(t.buy_rate)}</td>
-          <td class="px-3 py-2 text-right font-medium">${fmtNum(t.buy_amt)}</td>
-          <td class="px-3 py-2 text-right">${fmtNum(t.dalal)}</td>
-          <td class="px-3 py-2 text-right">${fmtNum(t.sell_app)}</td>
-          <td class="px-3 py-2 text-right">${fmtNum(t.sell_rate)}</td>
-          <td class="px-3 py-2 text-right font-medium">${fmtNum(t.sell_amt)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(t.sell_party)}</td>
-          <td class="px-3 py-2 max-w-[220px] truncate" title="${TradeSlip.escapeHtml(t.applicant_name || "")}">${TradeSlip.escapeHtml(t.applicant_name || "—")}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(t.mail)}</td>
-          <td class="px-3 py-2 text-right">
-            <button type="button" class="ipo-edit rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium hover:bg-slate-50" data-id="${TradeSlip.escapeHtml(t.id)}">Edit</button>
-            <button type="button" class="ipo-del rounded border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50" data-id="${TradeSlip.escapeHtml(t.id)}">Delete</button>
+    posBody.innerHTML = positions
+      .map((p) => {
+        const ipoName = (p.ipo && (p.ipo.display_name || p.ipo.name)) || "—";
+        return `<tr class="hover:bg-slate-50">
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.trade_date)}</td>
+          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(ipoName)}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.party)}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.category)}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.applicant_name || "—")}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.sold_app)}</td>
+          <td class="px-3 py-2 text-right font-semibold">${fmt(p.remaining_app)}</td>
+          <td class="px-3 py-2">${statusBadge(p.status)}</td>
+          <td class="px-3 py-2 text-right space-x-1">
+            <button type="button" class="open-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Open / Sell</button>
+            <button type="button" class="del-pos rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>
           </td>
         </tr>`;
       })
       .join("");
 
-    ipoBody.querySelectorAll(".ipo-edit").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const trade = trades.find((item) => item.id === btn.dataset.id);
-        if (trade) openModal(trade);
-      });
+    posBody.querySelectorAll(".open-pos").forEach((btn) => {
+      btn.addEventListener("click", () => openDetail(btn.dataset.id));
     });
-    ipoBody.querySelectorAll(".ipo-del").forEach((btn) => {
+    posBody.querySelectorAll(".del-pos").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        if (!confirm("Delete this IPO trade permanently?")) return;
-        TradeSlip.showProgress("Deleting…", "Removing trade row.");
+        if (!confirm("Delete this buy position and all its sell transactions?")) return;
+        TradeSlip.showProgress("Deleting…", "Removing position.");
         try {
-          const response = await TradeSlip.apiFetch(`/api/ipo/trades/${encodeURIComponent(btn.dataset.id)}`, {
-            method: "DELETE",
-          });
+          const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE" });
           const payload = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-          setStatus("Trade deleted.", "success");
-          await loadTrades();
-        } catch (error) {
-          setStatus(error.message, "error");
+          await loadPositions();
+        } catch (e) {
+          setMsg(posStatus, e.message, "error");
         } finally {
           TradeSlip.hideProgress();
         }
@@ -323,139 +271,202 @@
     });
   }
 
-  async function loadLabels() {
-    try {
-      const response = await TradeSlip.apiFetch("/api/ipo/category-labels");
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-      categoryOptions.innerHTML = (payload.labels || [])
-        .map((label) => `<option value="${TradeSlip.escapeHtml(label.code)}"></option>`)
-        .join("");
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  async function loadTrades() {
-    setStatus("Loading…", "info");
+  async function loadPositions() {
+    setMsg(posStatus, "Loading…", "info");
     const params = new URLSearchParams();
-    if (document.getElementById("ipoFrom").value) params.set("from", document.getElementById("ipoFrom").value);
-    if (document.getElementById("ipoTo").value) params.set("to", document.getElementById("ipoTo").value);
-    if (document.getElementById("ipoScriptFilter").value.trim())
-      params.set("script", document.getElementById("ipoScriptFilter").value.trim());
-    if (document.getElementById("ipoPartyFilter").value.trim())
-      params.set("party", document.getElementById("ipoPartyFilter").value.trim());
-    if (document.getElementById("ipoCategoryFilter").value.trim())
-      params.set("category", document.getElementById("ipoCategoryFilter").value.trim());
-    if (document.getElementById("ipoSellPartyFilter").value.trim())
-      params.set("sell_party", document.getElementById("ipoSellPartyFilter").value.trim());
-    if (document.getElementById("ipoMailFilter").value)
-      params.set("mail", document.getElementById("ipoMailFilter").value);
+    if (filterIpo.value) params.set("ipo_id", filterIpo.value);
+    if (document.getElementById("filterStatus").value) params.set("status", document.getElementById("filterStatus").value);
+    if (document.getElementById("filterParty").value.trim()) params.set("party", document.getElementById("filterParty").value.trim());
     try {
-      const response = await TradeSlip.apiFetch(`/api/ipo/trades?${params.toString()}`);
+      const response = await TradeSlip.apiFetch(`/api/ipo/positions?${params}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-      trades = payload.trades || [];
-      renderTrades();
-      setStatus("", null);
-    } catch (error) {
-      ipoBody.innerHTML = `<tr><td colspan="15" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(error.message)}</td></tr>`;
-      setStatus(error.message, "error");
+      positions = payload.positions || [];
+      renderPositions();
+      setMsg(posStatus, "", null);
+    } catch (e) {
+      posBody.innerHTML = `<tr><td colspan="10" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(e.message)}</td></tr>`;
+      setMsg(posStatus, e.message, "error");
     }
   }
 
-  document.getElementById("ipoAddBtn").addEventListener("click", () => openModal(null));
-  document.getElementById("ipoModalClose").addEventListener("click", closeModal);
-  document.getElementById("ipoModalCancel").addEventListener("click", closeModal);
-  document.getElementById("ipoApplyFilters").addEventListener("click", loadTrades);
-  document.getElementById("ipoClearFilters").addEventListener("click", () => {
-    ["ipoFrom", "ipoTo", "ipoScriptFilter", "ipoPartyFilter", "ipoCategoryFilter", "ipoSellPartyFilter"].forEach(
-      (id) => (document.getElementById(id).value = "")
-    );
-    document.getElementById("ipoMailFilter").value = "";
-    loadTrades();
+  function openBuyModal() {
+    document.getElementById("buyError").classList.add("hidden");
+    document.getElementById("buyDate").value = TradeSlip.todayIso();
+    document.getElementById("buyParty").value = "";
+    document.getElementById("buyCategory").value = "";
+    document.getElementById("buyApplicant").value = "";
+    document.getElementById("buyApp").value = "";
+    document.getElementById("buyRate").value = "";
+    document.getElementById("buyAmtPreview").textContent = "0";
+    document.getElementById("buyModal").classList.remove("hidden");
+  }
+
+  function closeBuyModal() {
+    document.getElementById("buyModal").classList.add("hidden");
+  }
+
+  function recalcBuy() {
+    const a = Number(document.getElementById("buyApp").value || 0);
+    const r = Number(document.getElementById("buyRate").value || 0);
+    document.getElementById("buyAmtPreview").textContent = fmt(a * r);
+  }
+  document.getElementById("buyApp").addEventListener("input", recalcBuy);
+  document.getElementById("buyRate").addEventListener("input", recalcBuy);
+
+  document.getElementById("buyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("buyError");
+    err.classList.add("hidden");
+    if (!document.getElementById("buyIpo").value) {
+      err.textContent = "Create an Active IPO in IPO Master first.";
+      err.classList.remove("hidden");
+      return;
+    }
+    TradeSlip.showProgress("Saving buy…", "Creating open position.");
+    try {
+      const response = await TradeSlip.apiFetch("/api/ipo/positions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ipo_id: document.getElementById("buyIpo").value,
+          trade_date: document.getElementById("buyDate").value,
+          party: document.getElementById("buyParty").value.trim(),
+          category: document.getElementById("buyCategory").value.trim(),
+          applicant_name: document.getElementById("buyApplicant").value.trim(),
+          buy_app: Number(document.getElementById("buyApp").value),
+          buy_rate: Number(document.getElementById("buyRate").value),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      closeBuyModal();
+      await loadPositions();
+      setMsg(posStatus, "Buy recorded (Open).", "success");
+    } catch (error) {
+      err.textContent = error.message;
+      err.classList.remove("hidden");
+    } finally {
+      TradeSlip.hideProgress();
+    }
   });
 
-  ipoForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    ipoFormError.classList.add("hidden");
-    const editId = document.getElementById("ipoEditId").value;
-    const dalalRaw = document.getElementById("fDalal").value;
-    const body = {
-      trade_date: document.getElementById("fDate").value,
-      script: document.getElementById("fScript").value.trim(),
-      party: document.getElementById("fParty").value.trim(),
-      category: document.getElementById("fCategory").value.trim(),
-      buy_app: Number(document.getElementById("fBuyApp").value),
-      buy_rate: Number(document.getElementById("fBuyRate").value),
-      sell_app: Number(document.getElementById("fSellApp").value),
-      sell_rate: Number(document.getElementById("fSellRate").value),
-      sell_party: document.getElementById("fSellParty").value.trim(),
-      applicant_name: document.getElementById("fApplicant").value.trim(),
-      mail: document.getElementById("fMail").value,
-    };
-    if (dalalRaw === "") {
-      if (editId) body.clear_dalal = true;
-    } else {
-      body.dalal = Number(dalalRaw);
-    }
-
-    const saveBtn = document.getElementById("ipoSaveBtn");
-    saveBtn.disabled = true;
-    TradeSlip.showProgress("Saving…", "Calculating amounts and saving trade.");
+  async function openDetail(id) {
+    TradeSlip.showProgress("Loading…", "Fetching position and sells.");
     try {
-      const response = await TradeSlip.apiFetch(editId ? `/api/ipo/trades/${encodeURIComponent(editId)}` : "/api/ipo/trades", {
-        method: editId ? "PATCH" : "POST",
+      const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(id)}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      currentDetail = payload;
+      const ipoName = (payload.ipo && (payload.ipo.display_name || payload.ipo.name)) || "";
+      document.getElementById("detailTitle").textContent = `${payload.party} · ${ipoName}`;
+      document.getElementById("detailSub").textContent = `${payload.trade_date} · ${payload.category} · ${payload.status}`;
+      document.getElementById("detailSummary").innerHTML = `
+        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">BUY APP</div><div class="font-semibold">${fmt(payload.buy_app)}</div></div>
+        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">Sold</div><div class="font-semibold">${fmt(payload.sold_app)}</div></div>
+        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">Remaining</div><div class="font-semibold">${fmt(payload.remaining_app)}</div></div>
+        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">BUY AMT</div><div class="font-semibold">${fmt(payload.buy_amt)}</div></div>`;
+      const sells = payload.sells || [];
+      document.getElementById("sellsList").innerHTML = sells.length
+        ? sells
+            .map(
+              (s) => `<div class="flex justify-between items-center rounded-lg border border-slate-200 px-3 py-2">
+            <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}</div>
+            <button type="button" class="del-sell text-xs text-red-600" data-id="${TradeSlip.escapeHtml(s.id)}">Remove</button>
+          </div>`
+            )
+            .join("")
+        : '<p class="text-slate-500">No sells yet — this position is Open.</p>';
+      document.getElementById("sellPositionId").value = payload.id;
+      document.getElementById("sellDate").value = TradeSlip.todayIso();
+      document.getElementById("sellParty").value = "";
+      document.getElementById("sellApp").value = "";
+      document.getElementById("sellRate").value = "";
+      document.getElementById("sellDalal").value = "";
+      document.getElementById("sellAmtPreview").textContent = "0";
+      document.getElementById("sellError").classList.add("hidden");
+      const canSell = payload.remaining_app > 0;
+      document.getElementById("sellSubmit").disabled = !canSell;
+      document.getElementById("detailModal").classList.remove("hidden");
+
+      document.querySelectorAll(".del-sell").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Remove this sell transaction?")) return;
+          TradeSlip.showProgress("Removing…", "Updating remaining quantity.");
+          try {
+            const response = await TradeSlip.apiFetch(
+              `/api/ipo/positions/${encodeURIComponent(payload.id)}/sells/${encodeURIComponent(btn.dataset.id)}`,
+              { method: "DELETE" }
+            );
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(body));
+            await openDetail(payload.id);
+            await loadPositions();
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            TradeSlip.hideProgress();
+          }
+        });
+      });
+    } catch (e) {
+      setMsg(posStatus, e.message, "error");
+    } finally {
+      TradeSlip.hideProgress();
+    }
+  }
+
+  function recalcSell() {
+    const a = Number(document.getElementById("sellApp").value || 0);
+    const r = Number(document.getElementById("sellRate").value || 0);
+    document.getElementById("sellAmtPreview").textContent = fmt(a * r);
+  }
+  document.getElementById("sellApp").addEventListener("input", recalcSell);
+  document.getElementById("sellRate").addEventListener("input", recalcSell);
+
+  document.getElementById("sellForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("sellError");
+    err.classList.add("hidden");
+    const positionId = document.getElementById("sellPositionId").value;
+    const dalalRaw = document.getElementById("sellDalal").value;
+    const body = {
+      sell_date: document.getElementById("sellDate").value,
+      sell_app: Number(document.getElementById("sellApp").value),
+      sell_rate: Number(document.getElementById("sellRate").value),
+      sell_party: document.getElementById("sellParty").value.trim(),
+    };
+    if (dalalRaw !== "") body.dalal = Number(dalalRaw);
+    TradeSlip.showProgress("Saving sell…", "Updating position status.");
+    try {
+      const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(positionId)}/sells`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-      closeModal();
-      setStatus(editId ? "Trade updated." : "Trade added.", "success");
-      await loadTrades();
+      await openDetail(positionId);
+      await loadPositions();
     } catch (error) {
-      ipoFormError.textContent = error.message;
-      ipoFormError.classList.remove("hidden");
-    } finally {
-      TradeSlip.hideProgress();
-      saveBtn.disabled = false;
-    }
-  });
-
-  document.getElementById("ipoCsvInput").addEventListener("change", async (event) => {
-    const file = event.target.files && event.target.files[0];
-    event.target.value = "";
-    if (!file) return;
-    const formData = new FormData();
-    formData.append("file", file);
-    TradeSlip.showProgress("Importing CSV…", "Creating IPO trades from your sheet.");
-    try {
-      const response = await TradeSlip.apiFetch("/api/ipo/trades/import", {
-        method: "POST",
-        body: formData,
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-      const failed = payload.failed_count || 0;
-      setStatus(
-        failed
-          ? `Imported ${payload.created}, failed ${failed}.`
-          : `Imported ${payload.created} trade(s).`,
-        failed ? "error" : "success"
-      );
-      await loadTrades();
-    } catch (error) {
-      setStatus(error.message, "error");
+      err.textContent = error.message;
+      err.classList.remove("hidden");
     } finally {
       TradeSlip.hideProgress();
     }
   });
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !ipoModal.classList.contains("hidden")) closeModal();
+  document.getElementById("addBuyBtn").addEventListener("click", openBuyModal);
+  document.getElementById("buyCancel").addEventListener("click", closeBuyModal);
+  document.getElementById("detailClose").addEventListener("click", () => document.getElementById("detailModal").classList.add("hidden"));
+  document.getElementById("applyFilters").addEventListener("click", loadPositions);
+  document.getElementById("clearFilters").addEventListener("click", () => {
+    filterIpo.value = "";
+    document.getElementById("filterStatus").value = "";
+    document.getElementById("filterParty").value = "";
+    loadPositions();
   });
 
-  loadLabels().then(loadTrades);
+  Promise.all([loadLabels(), loadActiveIpos()]).then(loadPositions);
 </script>
 {% endblock %}

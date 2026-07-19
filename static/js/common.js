@@ -8,6 +8,7 @@ TradeSlip.parseErrorDetail = function (payload) {
   if (Array.isArray(detail)) {
     return detail.map((item) => item.msg || JSON.stringify(item)).join(", ");
   }
+  if (typeof detail === "object" && detail.message) return String(detail.message);
   return "Request failed.";
 };
 

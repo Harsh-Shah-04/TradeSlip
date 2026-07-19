@@ -9,8 +9,24 @@
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800">
   {% if broker %}
-  <nav class="border-b border-slate-200 bg-white">
+  <nav class="border-b {% if module == 'ipo' %}border-emerald-200 bg-emerald-950{% else %}border-slate-200 bg-white{% endif %}">
     <div class="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      {% if module == 'ipo' %}
+      <div class="flex items-center gap-6">
+        <a href="/ipo" class="text-lg font-bold text-white">IPO Trading</a>
+        <div class="flex flex-wrap items-center gap-1 text-sm font-medium">
+          <a href="/ipo" class="rounded-lg px-3 py-1.5 {% if nav_active == 'ipo_positions' %}bg-emerald-800 text-white{% else %}text-emerald-100 hover:bg-emerald-900{% endif %}">Positions</a>
+          <a href="/ipo/master" class="rounded-lg px-3 py-1.5 {% if nav_active == 'ipo_master' %}bg-emerald-800 text-white{% else %}text-emerald-100 hover:bg-emerald-900{% endif %}">IPO Master</a>
+          {% if is_admin %}
+          <span class="px-2 text-emerald-400/70 text-xs self-center">Admin manages IPO Master</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span class="text-emerald-100">{{ broker.display_name }}</span>
+        <button type="button" id="navLogoutBtn" class="rounded-lg border border-emerald-700 bg-emerald-900 px-3 py-1.5 font-semibold text-emerald-50 hover:bg-emerald-800">Logout</button>
+      </div>
+      {% else %}
       <div class="flex items-center gap-6">
         <a href="/dashboard" class="text-lg font-bold text-slate-900">TradeSlip</a>
         <div class="flex flex-wrap items-center gap-1 text-sm font-medium">
@@ -24,13 +40,10 @@
       </div>
       <div class="flex items-center gap-3 text-sm">
         <span class="text-slate-600">{{ broker.display_name }} <span class="text-slate-400">({{ broker.email }})</span></span>
-        {% if module == 'ipo' %}
-        <a href="/dashboard" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Trade Slips</a>
-        {% else %}
         <a href="/ipo" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-100">IPO Trading</a>
-        {% endif %}
         <button type="button" id="navLogoutBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Logout</button>
       </div>
+      {% endif %}
     </div>
   </nav>
   {% endif %}

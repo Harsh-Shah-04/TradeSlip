@@ -37,14 +37,31 @@ from utils.auth import (
     validate_auth_config,
 )
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
-from utils.ipo.models import IpoTradeCreate, IpoTradeUpdate
+from utils.ipo.models import (
+    IpoMasterCreate,
+    IpoMasterUpdate,
+    PositionCreate,
+    PositionUpdate,
+    SellCreate,
+    SellUpdate,
+)
 from utils.ipo.service import (
-    create_trade as create_ipo_trade,
-    delete_trade as delete_ipo_trade,
-    import_trades_csv as import_ipo_trades_csv,
+    archive_ipo,
+    count_positions_for_ipo,
+    create_ipo,
+    create_position,
+    create_sell,
+    delete_ipo,
+    delete_position,
+    delete_sell,
+    get_ipo,
+    get_position,
     list_category_labels as list_ipo_category_labels,
-    list_trades as list_ipo_trades,
-    update_trade as update_ipo_trade,
+    list_ipos,
+    list_positions,
+    update_ipo,
+    update_position,
+    update_sell,
 )
 from utils.supabase_client import (
     broker_owns_storage_path,
@@ -538,7 +555,20 @@ async def ipo_page(
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse(
         "ipo.html",
-        page_context(request, broker, nav_active="ipo", module="ipo"),
+        page_context(request, broker, nav_active="ipo_positions", module="ipo"),
+    )
+
+
+@app.get("/ipo/master", response_class=HTMLResponse)
+async def ipo_master_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_master.html",
+        page_context(request, broker, nav_active="ipo_master", module="ipo"),
     )
 
 
@@ -1093,7 +1123,7 @@ async def admin_deactivate_broker(
 
 
 @app.get("/api/ipo/category-labels")
-async def ipo_category_labels(broker: BrokerAuth) -> JSONResponse:
+async def ipo_category_labels(_: BrokerAuth) -> JSONResponse:
     try:
         labels = await asyncio.to_thread(list_ipo_category_labels)
     except Exception as exc:
@@ -1102,103 +1132,223 @@ async def ipo_category_labels(broker: BrokerAuth) -> JSONResponse:
     return JSONResponse(content={"labels": labels})
 
 
-@app.get("/api/ipo/trades")
-async def ipo_get_trades(
+@app.get("/api/ipo/master")
+async def ipo_list_master(
+    _: BrokerAuth,
+    status: str | None = Query(default=None),
+    active_only: bool = Query(default=False),
+    include_archived: bool = Query(default=False),
+) -> JSONResponse:
+    try:
+        items = await asyncio.to_thread(
+            list_ipos,
+            status=status,
+            include_archived=include_archived,
+            active_only=active_only,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list IPO master")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"ipos": items})
+
+
+@app.post("/api/ipo/master")
+async def ipo_create_master(admin: AdminAuth, payload: IpoMasterCreate) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(create_ipo, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to create IPO")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=201)
+
+
+@app.patch("/api/ipo/master/{ipo_id}")
+async def ipo_patch_master(
+    admin: AdminAuth,
+    ipo_id: str,
+    payload: IpoMasterUpdate,
+) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(update_ipo, ipo_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to update IPO %s", ipo_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.post("/api/ipo/master/{ipo_id}/archive")
+async def ipo_archive_master(admin: AdminAuth, ipo_id: str) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(archive_ipo, ipo_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.delete("/api/ipo/master/{ipo_id}")
+async def ipo_delete_master(admin: AdminAuth, ipo_id: str) -> JSONResponse:
+    try:
+        await asyncio.to_thread(delete_ipo, ipo_id)
+    except PermissionError as exc:
+        count = await asyncio.to_thread(count_positions_for_ipo, ipo_id)
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "trade_count": count},
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "id": ipo_id})
+
+
+@app.get("/api/ipo/positions")
+async def ipo_get_positions(
     broker: BrokerAuth,
+    ipo_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    party: str | None = Query(default=None),
     date_from: str | None = Query(default=None, alias="from"),
     date_to: str | None = Query(default=None, alias="to"),
-    script: str | None = Query(default=None),
-    party: str | None = Query(default=None),
-    category: str | None = Query(default=None),
-    sell_party: str | None = Query(default=None),
-    mail: str | None = Query(default=None),
 ) -> JSONResponse:
     if date_from:
         validate_trade_date_iso(date_from)
     if date_to:
         validate_trade_date_iso(date_to)
+    if status and status not in ("Open", "Partially Sold", "Closed"):
+        raise HTTPException(status_code=400, detail="Invalid status filter.")
     try:
-        trades = await asyncio.to_thread(
-            list_ipo_trades,
+        items = await asyncio.to_thread(
+            list_positions,
             broker.id,
+            ipo_id=ipo_id,
+            status=status,
+            party=party,
             date_from=date_from,
             date_to=date_to,
-            script=script,
-            party=party,
-            category=category,
-            sell_party=sell_party,
-            mail=mail,
         )
     except Exception as exc:
-        logger.exception("Failed to list IPO trades")
-        raise HTTPException(status_code=500, detail=f"Failed to load IPO trades: {exc}") from exc
-    return JSONResponse(content={"trades": trades})
+        logger.exception("Failed to list positions")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"positions": items})
 
 
-@app.post("/api/ipo/trades")
-async def ipo_create_trade(broker: BrokerAuth, payload: IpoTradeCreate) -> JSONResponse:
+@app.post("/api/ipo/positions")
+async def ipo_create_position(broker: BrokerAuth, payload: PositionCreate) -> JSONResponse:
     try:
         validate_trade_date_iso(payload.trade_date)
-        trade = await asyncio.to_thread(create_ipo_trade, broker.id, payload)
+        item = await asyncio.to_thread(create_position, broker.id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Failed to create IPO trade")
-        raise HTTPException(status_code=500, detail=f"Create failed: {exc}") from exc
-    return JSONResponse(content=trade, status_code=201)
+        logger.exception("Failed to create position")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=201)
 
 
-@app.patch("/api/ipo/trades/{trade_id}")
-async def ipo_patch_trade(
+@app.get("/api/ipo/positions/{position_id}")
+async def ipo_get_position(broker: BrokerAuth, position_id: str) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(get_position, broker.id, position_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.patch("/api/ipo/positions/{position_id}")
+async def ipo_patch_position(
     broker: BrokerAuth,
-    trade_id: str,
-    payload: IpoTradeUpdate,
+    position_id: str,
+    payload: PositionUpdate,
 ) -> JSONResponse:
     try:
         if payload.trade_date:
             validate_trade_date_iso(payload.trade_date)
-        trade = await asyncio.to_thread(update_ipo_trade, broker.id, trade_id, payload)
+        item = await asyncio.to_thread(update_position, broker.id, position_id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Failed to update IPO trade %s", trade_id)
-        raise HTTPException(status_code=500, detail=f"Update failed: {exc}") from exc
-    return JSONResponse(content=trade)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
 
 
-@app.delete("/api/ipo/trades/{trade_id}")
-async def ipo_delete_trade(broker: BrokerAuth, trade_id: str) -> JSONResponse:
+@app.delete("/api/ipo/positions/{position_id}")
+async def ipo_delete_position(broker: BrokerAuth, position_id: str) -> JSONResponse:
     try:
-        await asyncio.to_thread(delete_ipo_trade, broker.id, trade_id)
+        await asyncio.to_thread(delete_position, broker.id, position_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Failed to delete IPO trade %s", trade_id)
-        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
-    return JSONResponse(content={"deleted": True, "id": trade_id})
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "id": position_id})
 
 
-@app.post("/api/ipo/trades/import")
-async def ipo_import_trades(
+@app.post("/api/ipo/positions/{position_id}/sells")
+async def ipo_create_sell(
     broker: BrokerAuth,
-    file: UploadFile = File(...),
+    position_id: str,
+    payload: SellCreate,
 ) -> JSONResponse:
-    filename = (file.filename or "").lower()
-    if not filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Upload a CSV export of your Excel sheet.")
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail="CSV file is empty.")
     try:
-        result = await asyncio.to_thread(import_ipo_trades_csv, broker.id, file_bytes)
+        validate_trade_date_iso(payload.sell_date)
+        result = await asyncio.to_thread(create_sell, broker.id, position_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("IPO CSV import failed")
-        raise HTTPException(status_code=500, detail=f"Import failed: {exc}") from exc
+        logger.exception("Failed to create sell")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result, status_code=201)
+
+
+@app.patch("/api/ipo/positions/{position_id}/sells/{sell_id}")
+async def ipo_patch_sell(
+    broker: BrokerAuth,
+    position_id: str,
+    sell_id: str,
+    payload: SellUpdate,
+) -> JSONResponse:
+    try:
+        if payload.sell_date:
+            validate_trade_date_iso(payload.sell_date)
+        result = await asyncio.to_thread(
+            update_sell, broker.id, position_id, sell_id, payload
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content=result)
+
+
+@app.delete("/api/ipo/positions/{position_id}/sells/{sell_id}")
+async def ipo_delete_sell(
+    broker: BrokerAuth,
+    position_id: str,
+    sell_id: str,
+) -> JSONResponse:
+    try:
+        position = await asyncio.to_thread(delete_sell, broker.id, position_id, sell_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "position": position})
 
 
 # Run locally: uvicorn main:app --reload
