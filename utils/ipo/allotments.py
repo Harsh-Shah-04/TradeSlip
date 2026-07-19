@@ -292,14 +292,6 @@ def seed_allotments(ipo_id: str) -> dict[str, Any]:
 
 def update_allotment(allotment_id: str, payload: AllotmentUpdate) -> dict[str, Any]:
     row = get_allotment(allotment_id)
-    if row.get("is_sold"):
-        touching_status = payload.status is not None and payload.status != row.get("status")
-        touching_shares = (
-            payload.shares_allotted is not None
-            and int(payload.shares_allotted) != int(row.get("shares_allotted") or 0)
-        )
-        if touching_status or touching_shares:
-            raise ValueError("Unmark sold before changing status or shares.")
 
     status = payload.status if payload.status is not None else row.get("status")
     shares = (
@@ -325,6 +317,19 @@ def update_allotment(allotment_id: str, payload: AllotmentUpdate) -> dict[str, A
         patch["listing_price_override"] = None
     if payload.notes is not None:
         patch["notes"] = payload.notes
+
+    # Sold is a flag only — edits stay allowed. Refresh sold_price if still sold + allotted.
+    if row.get("is_sold"):
+        if status == "Allotted" and shares > 0:
+            merged = {**row, **patch}
+            ipo = get_ipo(str(row["ipo_id"]), include_trade_count=False)
+            price = _effective_price(merged, ipo.get("listing_price"))
+            if price is not None:
+                patch["sold_price"] = float(_money(price))
+        else:
+            patch["is_sold"] = False
+            patch["sold_price"] = None
+            patch["sold_at"] = None
 
     response = _http().patch(
         f"{_supabase_url()}/rest/v1/{ALLOTMENTS_TABLE}",
@@ -450,6 +455,74 @@ def mark_sold(ipo_id: str, sell_date: str) -> dict[str, Any]:
     return result
 
 
+def mark_sold_selected(allotment_ids: list[str], sell_date: str) -> dict[str, Any]:
+    """Mark only the given allotment rows as sold (must be Allotted with shares)."""
+    if not allotment_ids:
+        raise ValueError("Select at least one applicant.")
+
+    warnings: list[str] = []
+    marked = 0
+    errors: list[str] = []
+    ipo_id: str | None = None
+    total_value = 0.0
+
+    for allotment_id in allotment_ids:
+        try:
+            row = get_allotment(allotment_id)
+            ipo_id = str(row["ipo_id"])
+            if row.get("is_sold"):
+                continue
+            if row.get("status") != "Allotted" or int(row.get("shares_allotted") or 0) <= 0:
+                name = ((row.get("ipo_applicants") or {}) if isinstance(row.get("ipo_applicants"), dict) else {}).get(
+                    "name"
+                ) or allotment_id
+                errors.append(f"{name}: only Allotted rows with shares can be marked sold.")
+                continue
+            ipo = get_ipo(str(row["ipo_id"]), include_trade_count=False)
+            price = _effective_price(row, ipo.get("listing_price"))
+            if price is None:
+                name = ((row.get("ipo_applicants") or {}) if isinstance(row.get("ipo_applicants"), dict) else {}).get(
+                    "name"
+                ) or allotment_id
+                errors.append(f"{name}: set common sold price or a row sold price first.")
+                continue
+            response = _http().patch(
+                f"{_supabase_url()}/rest/v1/{ALLOTMENTS_TABLE}",
+                headers=_service_headers(
+                    {"Content-Type": "application/json", "Prefer": "return=minimal"}
+                ),
+                params={"id": f"eq.{allotment_id}", "is_sold": "eq.false"},
+                json={
+                    "is_sold": True,
+                    "sold_price": float(_money(price)),
+                    "sold_at": sell_date,
+                    "updated_at": _now(),
+                },
+                timeout=HTTP_TIMEOUT,
+            )
+            if response.status_code not in (200, 204):
+                raise RuntimeError(
+                    f"Mark sold failed ({response.status_code}): {response.text[:300]}"
+                )
+            shares = int(row.get("shares_allotted") or 0)
+            total_value += float(_money(price)) * shares
+            marked += 1
+        except Exception as exc:  # noqa: BLE001 — collect per-row errors for trader UI
+            errors.append(f"{allotment_id}: {exc}")
+
+    if not ipo_id:
+        raise ValueError("No valid allotment rows found.")
+    if marked == 0 and errors:
+        raise ValueError("; ".join(errors[:5]))
+
+    result = list_allotments(ipo_id)
+    result["marked"] = marked
+    result["total_value"] = float(_money(total_value))
+    result["errors"] = errors
+    result["warnings"] = warnings
+    return result
+
+
 def mark_sold_row(allotment_id: str, sell_date: str) -> dict[str, Any]:
     row = get_allotment(allotment_id)
     if row.get("status") != "Allotted" or int(row.get("shares_allotted") or 0) <= 0:
@@ -497,6 +570,37 @@ def unmark_sold(allotment_id: str) -> dict[str, Any]:
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Unmark sold failed ({response.status_code}): {response.text[:300]}")
     return allotment_to_json(get_allotment(allotment_id))
+
+
+def unmark_sold_selected(allotment_ids: list[str]) -> dict[str, Any]:
+    """Clear sold flag on the given allotment rows."""
+    if not allotment_ids:
+        raise ValueError("Select at least one applicant.")
+
+    unmarked = 0
+    errors: list[str] = []
+    ipo_id: str | None = None
+
+    for allotment_id in allotment_ids:
+        try:
+            row = get_allotment(allotment_id)
+            ipo_id = str(row["ipo_id"])
+            if not row.get("is_sold"):
+                continue
+            unmark_sold(allotment_id)
+            unmarked += 1
+        except Exception as exc:  # noqa: BLE001 — collect per-row errors for trader UI
+            errors.append(f"{allotment_id}: {exc}")
+
+    if not ipo_id:
+        raise ValueError("No valid allotment rows found.")
+    if unmarked == 0 and errors:
+        raise ValueError("; ".join(errors[:5]))
+
+    result = list_allotments(ipo_id)
+    result["unmarked"] = unmarked
+    result["errors"] = errors
+    return result
 
 
 def archive_allotment(allotment_id: str) -> dict[str, Any]:

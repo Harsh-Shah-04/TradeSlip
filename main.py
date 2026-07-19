@@ -49,6 +49,8 @@ from utils.ipo.models import (
     LedgerPaymentRequest,
     MarkSoldRequest,
     MarkSoldRowRequest,
+    MarkSoldSelectedRequest,
+    UnmarkSoldSelectedRequest,
     PartyCreate,
     PartyUpdate,
     PositionCreate,
@@ -92,8 +94,10 @@ from utils.ipo.allotments import (
     list_allotments,
     mark_sold,
     mark_sold_row,
+    mark_sold_selected,
     seed_allotments,
     unmark_sold,
+    unmark_sold_selected,
     update_allotment,
 )
 from utils.ipo.settlement import (
@@ -1948,6 +1952,34 @@ async def ipo_patch_allotment(
 async def ipo_mark_sold_bulk(admin: AdminAuth, payload: MarkSoldRequest) -> JSONResponse:
     try:
         result = await asyncio.to_thread(mark_sold, payload.ipo_id, payload.sell_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/mark-sold-selected")
+async def ipo_mark_sold_selected(
+    admin: AdminAuth, payload: MarkSoldSelectedRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            mark_sold_selected, payload.allotment_ids, payload.sell_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/unmark-sold-selected")
+async def ipo_unmark_sold_selected(
+    admin: AdminAuth, payload: UnmarkSoldSelectedRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(unmark_sold_selected, payload.allotment_ids)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

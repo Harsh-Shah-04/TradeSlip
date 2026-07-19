@@ -101,6 +101,15 @@ class MarkSoldRequest(BaseModel):
     sell_date: str = Field(min_length=10, max_length=10)
 
 
+class MarkSoldSelectedRequest(BaseModel):
+    allotment_ids: list[str] = Field(min_length=1)
+    sell_date: str = Field(min_length=10, max_length=10)
+
+
+class UnmarkSoldSelectedRequest(BaseModel):
+    allotment_ids: list[str] = Field(min_length=1)
+
+
 class MarkSoldRowRequest(BaseModel):
     sell_date: str = Field(min_length=10, max_length=10)
 
