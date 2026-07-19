@@ -163,6 +163,11 @@ def resolve_active_sell_party_name(raw: str | None) -> str:
     )
 
 
+def archive_sell_party(sell_party_id: str) -> dict[str, Any]:
+    return update_sell_party(
+        sell_party_id, SellPartyUpdate(is_archived=True, status="Inactive")
+    )
+
 
 def delete_sell_party(sell_party_id: str) -> None:
     existing = get_sell_party(sell_party_id)
