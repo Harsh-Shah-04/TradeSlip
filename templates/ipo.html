@@ -80,15 +80,17 @@
       </div>
       <div>
         <label class="block text-sm font-medium mb-1" for="buyParty">PARTY</label>
-        <input type="text" id="buyParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        <select id="buyParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="buyApplicant">APPLICANT</label>
+        <select id="buyApplicant" required class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="">Select party first</option>
+        </select>
       </div>
       <div>
         <label class="block text-sm font-medium mb-1" for="buyCategory">CATEGORY</label>
         <input type="text" id="buyCategory" list="catOptions" required class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="15K, 2+, 10+, SHARE…" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium mb-1" for="buyApplicant">APPLICANT NAME</label>
-        <input type="text" id="buyApplicant" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
@@ -135,6 +137,15 @@
           <label class="block text-sm font-medium mb-1" for="sellParty">SELL PARTY</label>
           <input type="text" id="sellParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Applicants being sold</label>
+        <p class="text-xs text-slate-500 mb-2">Select the exact applicant(s) sold to the broker (required for confirmations).</p>
+        <div id="sellApplicantsBox" class="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 text-sm bg-slate-50">
+          <p class="text-slate-500 text-xs">Open a position to load applicants.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-sm font-medium mb-1" for="sellApp">SELL APP</label>
           <input type="number" id="sellApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
@@ -168,6 +179,8 @@
   let positions = [];
   let activeIpos = [];
   let currentDetail = null;
+  let clientParties = [];
+  let applicantsByParty = {};
 
   const posBody = document.getElementById("posBody");
   const posStatus = document.getElementById("posStatus");
@@ -190,6 +203,61 @@
     };
     return `<span class="rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] || "bg-slate-100"}">${TradeSlip.escapeHtml(status)}</span>`;
   }
+
+  async function loadClientMaster() {
+    const response = await TradeSlip.apiFetch("/api/ipo/parties?status=Active");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    clientParties = payload.parties || [];
+    const buyParty = document.getElementById("buyParty");
+    buyParty.innerHTML = clientParties.length
+      ? '<option value="">Select party</option>' + clientParties.map((p) =>
+          `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}</option>`
+        ).join("")
+      : '<option value="">No parties — import Client Master first</option>';
+  }
+
+  async function fetchApplicantsForParty(partyId) {
+    if (!partyId) return [];
+    if (!applicantsByParty[partyId]) {
+      const response = await TradeSlip.apiFetch(`/api/ipo/applicants?party_id=${encodeURIComponent(partyId)}&status=Active`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      applicantsByParty[partyId] = payload.applicants || [];
+    }
+    return applicantsByParty[partyId];
+  }
+
+  async function loadApplicantsForParty(partyId) {
+    const buyApplicant = document.getElementById("buyApplicant");
+    if (!partyId) {
+      buyApplicant.innerHTML = '<option value="">Select party first</option>';
+      return [];
+    }
+    const apps = await fetchApplicantsForParty(partyId);
+    buyApplicant.innerHTML = apps.length
+      ? '<option value="">Select applicant</option>' + apps.map((a) =>
+          `<option value="${TradeSlip.escapeHtml(a.id)}" data-category="${TradeSlip.escapeHtml(a.category || "")}" data-amt="${a.default_app_amount ?? ""}">${TradeSlip.escapeHtml(a.name)}${a.pan ? " · " + TradeSlip.escapeHtml(a.pan) : ""}</option>`
+        ).join("")
+      : '<option value="">No active applicants for this party</option>';
+    return apps;
+  }
+
+  document.getElementById("buyParty").addEventListener("change", async () => {
+    await loadApplicantsForParty(document.getElementById("buyParty").value);
+  });
+
+  document.getElementById("buyApplicant").addEventListener("change", () => {
+    const opt = document.getElementById("buyApplicant").selectedOptions[0];
+    if (!opt) return;
+    const cat = opt.dataset.category || "";
+    const amt = opt.dataset.amt || "";
+    if (cat && !document.getElementById("buyCategory").value) document.getElementById("buyCategory").value = cat;
+    if (amt && !document.getElementById("buyApp").value) {
+      document.getElementById("buyApp").value = amt;
+      recalcBuy();
+    }
+  });
 
   async function loadActiveIpos() {
     const response = await TradeSlip.apiFetch("/api/ipo/master?active_only=true");
@@ -294,8 +362,8 @@
     document.getElementById("buyError").classList.add("hidden");
     document.getElementById("buyDate").value = TradeSlip.todayIso();
     document.getElementById("buyParty").value = "";
+    document.getElementById("buyApplicant").innerHTML = '<option value="">Select party first</option>';
     document.getElementById("buyCategory").value = "";
-    document.getElementById("buyApplicant").value = "";
     document.getElementById("buyApp").value = "";
     document.getElementById("buyRate").value = "";
     document.getElementById("buyAmtPreview").textContent = "0";
@@ -331,9 +399,9 @@
         body: JSON.stringify({
           ipo_id: document.getElementById("buyIpo").value,
           trade_date: document.getElementById("buyDate").value,
-          party: document.getElementById("buyParty").value.trim(),
+          party_id: document.getElementById("buyParty").value,
+          applicant_id: document.getElementById("buyApplicant").value,
           category: document.getElementById("buyCategory").value.trim(),
-          applicant_name: document.getElementById("buyApplicant").value.trim(),
           buy_app: Number(document.getElementById("buyApp").value),
           buy_rate: Number(document.getElementById("buyRate").value),
         }),
@@ -369,12 +437,16 @@
       const sells = payload.sells || [];
       document.getElementById("sellsList").innerHTML = sells.length
         ? sells
-            .map(
-              (s) => `<div class="flex justify-between items-center rounded-lg border border-slate-200 px-3 py-2">
-            <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}</div>
+            .map((s) => {
+              const appNames = (s.applicants || []).map((a) => a.name).join(", ") || "—";
+              return `<div class="flex justify-between items-center rounded-lg border border-slate-200 px-3 py-2">
+            <div>
+              <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}</div>
+              <div class="text-xs text-slate-500 mt-0.5">Applicants: ${TradeSlip.escapeHtml(appNames)}</div>
+            </div>
             <button type="button" class="del-sell text-xs text-red-600" data-id="${TradeSlip.escapeHtml(s.id)}">Remove</button>
-          </div>`
-            )
+          </div>`;
+            })
             .join("")
         : '<p class="text-slate-500">No sells yet — this position is Open.</p>';
       document.getElementById("sellPositionId").value = payload.id;
@@ -385,6 +457,7 @@
       document.getElementById("sellDalal").value = "";
       document.getElementById("sellAmtPreview").textContent = "0";
       document.getElementById("sellError").classList.add("hidden");
+      await renderSellApplicantChoices(payload);
       const canSell = payload.remaining_app > 0;
       document.getElementById("sellSubmit").disabled = !canSell;
       document.getElementById("detailModal").classList.remove("hidden");
@@ -416,6 +489,31 @@
     }
   }
 
+  async function renderSellApplicantChoices(position) {
+    const box = document.getElementById("sellApplicantsBox");
+    let apps = [];
+    if (position.party_id) {
+      apps = await fetchApplicantsForParty(position.party_id);
+    }
+    if (!apps.length) {
+      box.innerHTML = '<p class="text-amber-700 text-xs">No Client Master applicants for this party. Add them in Client Master, or ensure the buy was linked to a party.</p>';
+      return;
+    }
+    const preselect = position.applicant_id || "";
+    box.innerHTML = apps.map((a) => {
+      const checked = a.id === preselect ? "checked" : "";
+      return `<label class="flex items-start gap-2 rounded px-1 py-1 hover:bg-white cursor-pointer">
+        <input type="checkbox" class="sell-app-cb mt-0.5 rounded border-slate-300" value="${TradeSlip.escapeHtml(a.id)}" ${checked} />
+        <span><span class="font-medium">${TradeSlip.escapeHtml(a.name)}</span>
+        <span class="text-xs text-slate-500 block">${TradeSlip.escapeHtml(a.pan || "—")} · ${TradeSlip.escapeHtml(a.dpid || "—")}</span></span>
+      </label>`;
+    }).join("");
+  }
+
+  function selectedSellApplicantIds() {
+    return Array.from(document.querySelectorAll(".sell-app-cb:checked")).map((el) => el.value);
+  }
+
   function recalcSell() {
     const a = Number(document.getElementById("sellApp").value || 0);
     const r = Number(document.getElementById("sellRate").value || 0);
@@ -430,11 +528,18 @@
     err.classList.add("hidden");
     const positionId = document.getElementById("sellPositionId").value;
     const dalalRaw = document.getElementById("sellDalal").value;
+    const applicantIds = selectedSellApplicantIds();
+    if (!applicantIds.length) {
+      err.textContent = "Select at least one applicant being sold.";
+      err.classList.remove("hidden");
+      return;
+    }
     const body = {
       sell_date: document.getElementById("sellDate").value,
       sell_app: Number(document.getElementById("sellApp").value),
       sell_rate: Number(document.getElementById("sellRate").value),
       sell_party: document.getElementById("sellParty").value.trim(),
+      applicant_ids: applicantIds,
     };
     if (dalalRaw !== "") body.dalal = Number(dalalRaw);
     TradeSlip.showProgress("Saving sell…", "Updating position status.");
@@ -467,6 +572,6 @@
     loadPositions();
   });
 
-  Promise.all([loadLabels(), loadActiveIpos()]).then(loadPositions);
+  Promise.all([loadLabels(), loadActiveIpos(), loadClientMaster()]).then(loadPositions);
 </script>
 {% endblock %}

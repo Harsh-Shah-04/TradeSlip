@@ -51,18 +51,101 @@ class IpoMasterUpdate(BaseModel):
         return value
 
 
+class PartyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    notes: str = Field(default="", max_length=2000)
+    status: str = Field(default="Active")
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+    @field_validator("name", "notes")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return _strip(value)
+
+
+class PartyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+    is_archived: bool | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+
+class ApplicantCreate(BaseModel):
+    party_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=500)
+    pan: str = Field(default="", max_length=20)
+    dpid: str = Field(default="", max_length=50)
+    category: str = Field(default="", max_length=100)
+    default_app_amount: float | None = None
+    mobile: str = Field(default="", max_length=30)
+    email: str = Field(default="", max_length=200)
+    notes: str = Field(default="", max_length=2000)
+    status: str = Field(default="Active")
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+    @field_validator("name", "pan", "dpid", "category", "mobile", "email", "notes")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return _strip(value)
+
+
+class ApplicantUpdate(BaseModel):
+    party_id: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=500)
+    pan: str | None = Field(default=None, max_length=20)
+    dpid: str | None = Field(default=None, max_length=50)
+    category: str | None = Field(default=None, max_length=100)
+    default_app_amount: float | None = None
+    clear_default_app_amount: bool = False
+    mobile: str | None = Field(default=None, max_length=30)
+    email: str | None = Field(default=None, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+    is_archived: bool | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("Active", "Inactive"):
+            raise ValueError("status must be Active or Inactive")
+        return value
+
+
 class PositionCreate(BaseModel):
     """Buy stage only — sell happens later via sell legs."""
 
     ipo_id: str = Field(min_length=1)
     trade_date: str = Field(min_length=10, max_length=10)
-    party: str = Field(min_length=1, max_length=200)
+    party_id: str = Field(min_length=1)
+    applicant_id: str = Field(min_length=1)
     category: str = Field(min_length=1, max_length=100)
-    applicant_name: str = Field(default="", max_length=500)
     buy_app: float = Field(gt=0)
     buy_rate: float = Field(ge=0)
 
-    @field_validator("party", "category", "applicant_name")
+    @field_validator("category")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return _strip(value)
@@ -70,9 +153,9 @@ class PositionCreate(BaseModel):
 
 class PositionUpdate(BaseModel):
     trade_date: str | None = Field(default=None, min_length=10, max_length=10)
-    party: str | None = Field(default=None, min_length=1, max_length=200)
+    party_id: str | None = None
+    applicant_id: str | None = None
     category: str | None = Field(default=None, min_length=1, max_length=100)
-    applicant_name: str | None = Field(default=None, max_length=500)
     buy_app: float | None = Field(default=None, gt=0)
     buy_rate: float | None = Field(default=None, ge=0)
     ipo_id: str | None = None
@@ -83,6 +166,7 @@ class SellCreate(BaseModel):
     sell_app: float = Field(gt=0)
     sell_rate: float = Field(ge=0)
     sell_party: str = Field(min_length=1, max_length=200)
+    applicant_ids: list[str] = Field(min_length=1)
     dalal: float | None = None
     notes: str = Field(default="", max_length=1000)
 
@@ -91,12 +175,21 @@ class SellCreate(BaseModel):
     def strip_text(cls, value: str) -> str:
         return _strip(value)
 
+    @field_validator("applicant_ids")
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in value if v and str(v).strip()]
+        if not cleaned:
+            raise ValueError("Select at least one applicant being sold.")
+        return list(dict.fromkeys(cleaned))
+
 
 class SellUpdate(BaseModel):
     sell_date: str | None = Field(default=None, min_length=10, max_length=10)
     sell_app: float | None = Field(default=None, gt=0)
     sell_rate: float | None = Field(default=None, ge=0)
     sell_party: str | None = Field(default=None, min_length=1, max_length=200)
+    applicant_ids: list[str] | None = None
     dalal: float | None = None
     clear_dalal: bool = False
     notes: str | None = Field(default=None, max_length=1000)
@@ -127,7 +220,50 @@ def master_to_json(row: dict[str, Any], *, trade_count: int | None = None) -> di
     return payload
 
 
-def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
+def party_to_json(row: dict[str, Any], *, applicant_count: int | None = None) -> dict[str, Any]:
+    payload = {
+        "id": str(row.get("id") or ""),
+        "name": row.get("name"),
+        "notes": row.get("notes") or "",
+        "status": row.get("status") or "Active",
+        "is_archived": bool(row.get("is_archived", False)),
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+    if applicant_count is not None:
+        payload["applicant_count"] = applicant_count
+    return payload
+
+
+def applicant_to_json(
+    row: dict[str, Any], *, party: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return {
+        "id": str(row.get("id") or ""),
+        "party_id": str(row.get("party_id") or ""),
+        "party": party,
+        "name": row.get("name"),
+        "pan": row.get("pan") or "",
+        "dpid": row.get("dpid") or "",
+        "category": row.get("category") or "",
+        "default_app_amount": (
+            None
+            if row.get("default_app_amount") is None
+            else float(row.get("default_app_amount"))
+        ),
+        "mobile": row.get("mobile") or "",
+        "email": row.get("email") or "",
+        "notes": row.get("notes") or "",
+        "status": row.get("status") or "Active",
+        "is_archived": bool(row.get("is_archived", False)),
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+def sell_to_json(
+    row: dict[str, Any], *, applicants: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -137,6 +273,8 @@ def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
         "sell_rate": float(row.get("sell_rate") or 0),
         "sell_amt": float(row.get("sell_amt") or 0),
         "sell_party": row.get("sell_party"),
+        "applicants": applicants or [],
+        "applicant_ids": [a["id"] for a in (applicants or [])],
         "dalal": None if row.get("dalal") is None else float(row.get("dalal")),
         "notes": row.get("notes") or "",
         "created_at": _iso(row.get("created_at")),
@@ -167,9 +305,11 @@ def position_to_json(
         "ipo_id": str(row.get("ipo_id") or ""),
         "ipo": ipo,
         "trade_date": _iso(row.get("trade_date")),
+        "party_id": str(row.get("party_id") or "") or None,
         "party": row.get("party"),
         "category": row.get("category"),
         "category_group": row.get("category_group"),
+        "applicant_id": str(row.get("applicant_id") or "") or None,
         "applicant_name": row.get("applicant_name") or "",
         "buy_app": buy_app,
         "buy_rate": float(row.get("buy_rate") or 0),

@@ -16,10 +16,8 @@
         <a href="/ipo" class="text-lg font-bold text-white">IPO Trading</a>
         <div class="flex flex-wrap items-center gap-1 text-sm font-medium">
           <a href="/ipo" class="rounded-lg px-3 py-1.5 {% if nav_active == 'ipo_positions' %}bg-emerald-800 text-white{% else %}text-emerald-100 hover:bg-emerald-900{% endif %}">Positions</a>
+          <a href="/ipo/clients" class="rounded-lg px-3 py-1.5 {% if nav_active == 'ipo_clients' %}bg-emerald-800 text-white{% else %}text-emerald-100 hover:bg-emerald-900{% endif %}">Client Master</a>
           <a href="/ipo/master" class="rounded-lg px-3 py-1.5 {% if nav_active == 'ipo_master' %}bg-emerald-800 text-white{% else %}text-emerald-100 hover:bg-emerald-900{% endif %}">IPO Master</a>
-          {% if is_admin %}
-          <span class="px-2 text-emerald-400/70 text-xs self-center">Admin manages IPO Master</span>
-          {% endif %}
         </div>
       </div>
       <div class="flex items-center gap-3 text-sm">

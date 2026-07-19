@@ -38,12 +38,29 @@ from utils.auth import (
 )
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
 from utils.ipo.models import (
+    ApplicantCreate,
+    ApplicantUpdate,
     IpoMasterCreate,
     IpoMasterUpdate,
+    PartyCreate,
+    PartyUpdate,
     PositionCreate,
     PositionUpdate,
     SellCreate,
     SellUpdate,
+)
+from utils.ipo.clients import (
+    archive_applicant,
+    archive_party,
+    create_applicant,
+    create_party,
+    delete_applicant,
+    delete_party,
+    import_clients_from_excel,
+    list_applicants,
+    list_parties,
+    update_applicant,
+    update_party,
 )
 from utils.ipo.service import (
     archive_ipo,
@@ -569,6 +586,19 @@ async def ipo_master_page(
     return templates.TemplateResponse(
         "ipo_master.html",
         page_context(request, broker, nav_active="ipo_master", module="ipo"),
+    )
+
+
+@app.get("/ipo/clients", response_class=HTMLResponse)
+async def ipo_clients_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo_clients.html",
+        page_context(request, broker, nav_active="ipo_clients", module="ipo"),
     )
 
 
@@ -1130,6 +1160,178 @@ async def ipo_category_labels(_: BrokerAuth) -> JSONResponse:
         logger.exception("Failed to list IPO category labels")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content={"labels": labels})
+
+
+# ---------------------------------------------------------------------------
+# Client Master API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/ipo/parties")
+async def ipo_list_parties(
+    _: BrokerAuth,
+    include_archived: bool = Query(default=False),
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        items = await asyncio.to_thread(
+            list_parties,
+            include_archived=include_archived,
+            status=status,
+            search=search,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list parties")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"parties": items})
+
+
+@app.post("/api/ipo/parties")
+async def ipo_create_party(admin: AdminAuth, payload: PartyCreate) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(create_party, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to create party")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=201)
+
+
+@app.patch("/api/ipo/parties/{party_id}")
+async def ipo_patch_party(admin: AdminAuth, party_id: str, payload: PartyUpdate) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(update_party, party_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.post("/api/ipo/parties/{party_id}/archive")
+async def ipo_archive_party(admin: AdminAuth, party_id: str) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(archive_party, party_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.delete("/api/ipo/parties/{party_id}")
+async def ipo_delete_party(admin: AdminAuth, party_id: str) -> JSONResponse:
+    try:
+        await asyncio.to_thread(delete_party, party_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail={"message": str(exc)}) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "id": party_id})
+
+
+@app.get("/api/ipo/applicants")
+async def ipo_list_applicants(
+    _: BrokerAuth,
+    party_id: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        items = await asyncio.to_thread(
+            list_applicants,
+            party_id=party_id,
+            include_archived=include_archived,
+            status=status,
+            search=search,
+            category=category,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list applicants")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"applicants": items})
+
+
+@app.post("/api/ipo/applicants")
+async def ipo_create_applicant(admin: AdminAuth, payload: ApplicantCreate) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(create_applicant, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to create applicant")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=201)
+
+
+@app.patch("/api/ipo/applicants/{applicant_id}")
+async def ipo_patch_applicant(
+    admin: AdminAuth, applicant_id: str, payload: ApplicantUpdate
+) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(update_applicant, applicant_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.post("/api/ipo/applicants/{applicant_id}/archive")
+async def ipo_archive_applicant(admin: AdminAuth, applicant_id: str) -> JSONResponse:
+    try:
+        item = await asyncio.to_thread(archive_applicant, applicant_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=item)
+
+
+@app.delete("/api/ipo/applicants/{applicant_id}")
+async def ipo_delete_applicant(admin: AdminAuth, applicant_id: str) -> JSONResponse:
+    try:
+        await asyncio.to_thread(delete_applicant, applicant_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail={"message": str(exc)}) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"deleted": True, "id": applicant_id})
+
+
+@app.post("/api/ipo/clients/import")
+async def ipo_import_clients(
+    admin: AdminAuth,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    filename = (file.filename or "").lower()
+    if not filename.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Upload an Excel .xlsx file.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    try:
+        result = await asyncio.to_thread(import_clients_from_excel, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Client Excel import failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
 
 
 @app.get("/api/ipo/master")

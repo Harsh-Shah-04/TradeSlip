@@ -1,0 +1,537 @@
+{% extends "base.html" %}
+{% block title %}Client Master · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1400px] mx-auto px-4 py-8{% endblock %}
+{% block content %}
+<header class="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+  <div>
+    <h1 class="text-3xl font-bold text-slate-900">Client Master</h1>
+    <p class="text-slate-600 mt-1">One Party → many Applicants. Source of truth for buys, sells, and future confirmations.</p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+    {% if is_admin %}
+    <label class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold cursor-pointer hover:bg-slate-50">
+      Import Excel
+      <input type="file" id="importFile" accept=".xlsx,.xlsm" class="hidden" />
+    </label>
+    <button type="button" id="addPartyBtn" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Add Party</button>
+    <button type="button" id="addApplicantBtn" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Add Applicant</button>
+    {% else %}
+    <p class="text-sm text-slate-500">View only — ask an admin to manage Client Master.</p>
+    {% endif %}
+  </div>
+</header>
+
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">Party</label>
+      <select id="filterParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSearch">Search</label>
+      <input id="filterSearch" type="text" placeholder="Name, PAN, DPID" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+    </div>
+    <div class="flex items-end gap-2 md:col-span-2">
+      <button type="button" id="applyFilters" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Apply</button>
+      <button type="button" id="clearFilters" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">Clear</button>
+      <label class="text-sm text-slate-600 flex items-center gap-2 ml-2">
+        <input type="checkbox" id="showArchived" class="rounded border-slate-300" />
+        Show archived
+      </label>
+      <p id="clientStatus" class="text-sm text-slate-500 ml-2"></p>
+    </div>
+  </div>
+</section>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-1">
+    <div class="px-4 py-3 border-b border-slate-200 flex justify-between">
+      <h2 class="font-semibold">Parties</h2>
+      <span id="partyCount" class="text-sm text-slate-500">0</span>
+    </div>
+    <div id="partyList" class="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
+      <p class="px-4 py-8 text-center text-slate-500 text-sm">Loading…</p>
+    </div>
+  </section>
+
+  <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-2">
+    <div class="px-4 py-3 border-b border-slate-200 flex justify-between">
+      <h2 class="font-semibold">Applicants <span id="applicantPartyLabel" class="font-normal text-slate-500"></span></h2>
+      <span id="applicantCount" class="text-sm text-slate-500">0</span>
+    </div>
+    <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-xs uppercase text-slate-600 sticky top-0">
+          <tr>
+            <th class="px-3 py-2">Name</th>
+            <th class="px-3 py-2">PAN</th>
+            <th class="px-3 py-2">DPID</th>
+            <th class="px-3 py-2">Category</th>
+            <th class="px-3 py-2">Status</th>
+            <th class="px-3 py-2 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="applicantBody" class="divide-y divide-slate-100">
+          <tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Select a party</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- Party modal -->
+<div id="partyModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white border p-6 shadow-2xl">
+    <h3 id="partyModalTitle" class="text-xl font-semibold mb-4">Add Party</h3>
+    <form id="partyForm" class="space-y-3">
+      <input type="hidden" id="partyEditId" />
+      <div>
+        <label class="block text-sm font-medium mb-1" for="partyName">Party Name</label>
+        <input id="partyName" required maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="partyStatus">Status</label>
+        <select id="partyStatus" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="partyNotes">Notes</label>
+        <textarea id="partyNotes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2"></textarea>
+      </div>
+      <p id="partyError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="partyCancel" class="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+        <button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Applicant modal -->
+<div id="applicantModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-lg rounded-2xl bg-white border p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+    <h3 id="applicantModalTitle" class="text-xl font-semibold mb-4">Add Applicant</h3>
+    <form id="applicantForm" class="space-y-3">
+      <input type="hidden" id="applicantEditId" />
+      <div>
+        <label class="block text-sm font-medium mb-1" for="applicantParty">Party</label>
+        <select id="applicantParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="applicantName">Applicant Name</label>
+        <input id="applicantName" required maxlength="500" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantPan">PAN</label>
+          <input id="applicantPan" maxlength="20" class="w-full rounded-lg border border-slate-300 px-3 py-2 uppercase" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantDpid">DPID</label>
+          <input id="applicantDpid" maxlength="50" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantCategory">Category <span class="text-slate-400">(optional)</span></label>
+          <input id="applicantCategory" list="catOptions" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="15K, 2+, 10+…" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantDefaultAmt">Default App Amt <span class="text-slate-400">(optional)</span></label>
+          <input type="number" id="applicantDefaultAmt" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantMobile">Mobile</label>
+          <input id="applicantMobile" maxlength="30" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1" for="applicantEmail">Email</label>
+          <input type="email" id="applicantEmail" maxlength="200" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="applicantStatus">Status</label>
+        <select id="applicantStatus" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="applicantNotes">Notes</label>
+        <textarea id="applicantNotes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2"></textarea>
+      </div>
+      <p id="applicantError" class="hidden text-sm text-red-600"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="applicantCancel" class="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+        <button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="deleteWarnModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white border p-6 shadow-2xl">
+    <h3 class="text-xl font-semibold mb-2">Cannot delete</h3>
+    <p id="deleteWarnMsg" class="text-sm text-slate-600 mb-4"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" id="deleteWarnClose" class="rounded-lg border px-4 py-2 text-sm">Close</button>
+      <button type="button" id="deleteWarnArchive" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white">Archive instead</button>
+    </div>
+  </div>
+</div>
+
+<datalist id="catOptions"></datalist>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const isAdmin = {{ "true" if is_admin else "false" }};
+  let parties = [];
+  let applicants = [];
+  let selectedPartyId = "";
+  let pendingDelete = null; // { type: 'party'|'applicant', id }
+
+  const clientStatus = document.getElementById("clientStatus");
+  const partyList = document.getElementById("partyList");
+  const applicantBody = document.getElementById("applicantBody");
+
+  function setMsg(msg, tone) {
+    clientStatus.textContent = msg || "";
+    clientStatus.className = "text-sm ml-2 " + (tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : "text-slate-500");
+  }
+
+  function fillPartySelects() {
+    const filter = document.getElementById("filterParty");
+    const formSelect = document.getElementById("applicantParty");
+    const active = parties.filter((p) => !p.is_archived);
+    filter.innerHTML = '<option value="">All parties</option>' +
+      parties.map((p) => `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}${p.is_archived ? " (archived)" : ""}</option>`).join("");
+    formSelect.innerHTML = active.length
+      ? active.map((p) => `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}</option>`).join("")
+      : '<option value="">No parties — add one first</option>';
+  }
+
+  function renderParties() {
+    document.getElementById("partyCount").textContent = String(parties.length);
+    if (!parties.length) {
+      partyList.innerHTML = '<p class="px-4 py-8 text-center text-slate-500 text-sm">No parties yet. Import Excel or add a party.</p>';
+      return;
+    }
+    partyList.innerHTML = parties.map((p) => {
+      const selected = p.id === selectedPartyId ? "bg-emerald-50 border-l-4 border-emerald-600" : "hover:bg-slate-50";
+      return `<button type="button" class="party-item w-full text-left px-4 py-3 ${selected}" data-id="${TradeSlip.escapeHtml(p.id)}">
+        <div class="font-medium text-slate-900">${TradeSlip.escapeHtml(p.name)}</div>
+        <div class="text-xs text-slate-500 mt-0.5">${p.applicant_count || 0} applicant${(p.applicant_count || 0) === 1 ? "" : "s"} · ${TradeSlip.escapeHtml(p.status)}</div>
+        ${isAdmin ? `<div class="mt-2 flex gap-2" onclick="event.stopPropagation()">
+          <span class="edit-party text-xs text-emerald-700 cursor-pointer" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</span>
+          <span class="archive-party text-xs text-slate-600 cursor-pointer" data-id="${TradeSlip.escapeHtml(p.id)}">Archive</span>
+          <span class="del-party text-xs text-red-600 cursor-pointer" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</span>
+        </div>` : ""}
+      </button>`;
+    }).join("");
+
+    partyList.querySelectorAll(".party-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedPartyId = btn.dataset.id;
+        document.getElementById("filterParty").value = selectedPartyId;
+        renderParties();
+        loadApplicants();
+      });
+    });
+    if (isAdmin) {
+      partyList.querySelectorAll(".edit-party").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); openPartyModal(el.dataset.id); }));
+      partyList.querySelectorAll(".archive-party").forEach((el) => el.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("Archive this party?")) return;
+        const response = await TradeSlip.apiFetch(`/api/ipo/parties/${encodeURIComponent(el.dataset.id)}/archive`, { method: "POST" });
+        if (!response.ok) { const p = await response.json().catch(() => ({})); setMsg(TradeSlip.parseErrorDetail(p), "error"); return; }
+        await loadParties();
+      }));
+      partyList.querySelectorAll(".del-party").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); tryDelete("party", el.dataset.id); }));
+    }
+  }
+
+  function renderApplicants() {
+    const party = parties.find((p) => p.id === selectedPartyId);
+    document.getElementById("applicantPartyLabel").textContent = party ? `· ${party.name}` : "";
+    document.getElementById("applicantCount").textContent = String(applicants.length);
+    if (!selectedPartyId && !document.getElementById("filterSearch").value.trim()) {
+      applicantBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Select a party</td></tr>';
+      return;
+    }
+    if (!applicants.length) {
+      applicantBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No applicants found.</td></tr>';
+      return;
+    }
+    applicantBody.innerHTML = applicants.map((a) => `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(a.name)}</td>
+      <td class="px-3 py-2 font-mono text-xs">${TradeSlip.escapeHtml(a.pan || "—")}</td>
+      <td class="px-3 py-2 font-mono text-xs">${TradeSlip.escapeHtml(a.dpid || "—")}</td>
+      <td class="px-3 py-2">${TradeSlip.escapeHtml(a.category || "—")}</td>
+      <td class="px-3 py-2">${TradeSlip.escapeHtml(a.status)}${a.is_archived ? " · archived" : ""}</td>
+      <td class="px-3 py-2 text-right space-x-1">
+        ${isAdmin ? `<button type="button" class="edit-app rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(a.id)}">Edit</button>
+        <button type="button" class="arch-app rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(a.id)}">Archive</button>
+        <button type="button" class="del-app rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(a.id)}">Delete</button>` : "—"}
+      </td>
+    </tr>`).join("");
+
+    if (isAdmin) {
+      applicantBody.querySelectorAll(".edit-app").forEach((btn) => btn.addEventListener("click", () => openApplicantModal(btn.dataset.id)));
+      applicantBody.querySelectorAll(".arch-app").forEach((btn) => btn.addEventListener("click", async () => {
+        if (!confirm("Archive this applicant?")) return;
+        const response = await TradeSlip.apiFetch(`/api/ipo/applicants/${encodeURIComponent(btn.dataset.id)}/archive`, { method: "POST" });
+        if (!response.ok) { const p = await response.json().catch(() => ({})); setMsg(TradeSlip.parseErrorDetail(p), "error"); return; }
+        await loadApplicants();
+        await loadParties();
+      }));
+      applicantBody.querySelectorAll(".del-app").forEach((btn) => btn.addEventListener("click", () => tryDelete("applicant", btn.dataset.id)));
+    }
+  }
+
+  async function loadParties() {
+    const params = new URLSearchParams();
+    if (document.getElementById("showArchived").checked) params.set("include_archived", "true");
+    const response = await TradeSlip.apiFetch(`/api/ipo/parties?${params}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    parties = payload.parties || [];
+    fillPartySelects();
+    if (selectedPartyId && !parties.find((p) => p.id === selectedPartyId)) selectedPartyId = "";
+    renderParties();
+  }
+
+  async function loadApplicants() {
+    const params = new URLSearchParams();
+    const partyFilter = document.getElementById("filterParty").value;
+    const search = document.getElementById("filterSearch").value.trim();
+    if (partyFilter) {
+      selectedPartyId = partyFilter;
+      params.set("party_id", partyFilter);
+    } else if (selectedPartyId && !search) {
+      params.set("party_id", selectedPartyId);
+    }
+    if (search) params.set("search", search);
+    if (document.getElementById("showArchived").checked) params.set("include_archived", "true");
+    const response = await TradeSlip.apiFetch(`/api/ipo/applicants?${params}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    applicants = payload.applicants || [];
+    renderParties();
+    renderApplicants();
+  }
+
+  function openPartyModal(id) {
+    document.getElementById("partyError").classList.add("hidden");
+    document.getElementById("partyEditId").value = id || "";
+    document.getElementById("partyModalTitle").textContent = id ? "Edit Party" : "Add Party";
+    if (id) {
+      const p = parties.find((x) => x.id === id);
+      document.getElementById("partyName").value = p?.name || "";
+      document.getElementById("partyStatus").value = p?.status || "Active";
+      document.getElementById("partyNotes").value = p?.notes || "";
+    } else {
+      document.getElementById("partyName").value = "";
+      document.getElementById("partyStatus").value = "Active";
+      document.getElementById("partyNotes").value = "";
+    }
+    document.getElementById("partyModal").classList.remove("hidden");
+  }
+
+  function openApplicantModal(id) {
+    document.getElementById("applicantError").classList.add("hidden");
+    document.getElementById("applicantEditId").value = id || "";
+    document.getElementById("applicantModalTitle").textContent = id ? "Edit Applicant" : "Add Applicant";
+    fillPartySelects();
+    if (id) {
+      const a = applicants.find((x) => x.id === id);
+      document.getElementById("applicantParty").value = a?.party_id || "";
+      document.getElementById("applicantName").value = a?.name || "";
+      document.getElementById("applicantPan").value = a?.pan || "";
+      document.getElementById("applicantDpid").value = a?.dpid || "";
+      document.getElementById("applicantCategory").value = a?.category || "";
+      document.getElementById("applicantDefaultAmt").value = a?.default_app_amount ?? "";
+      document.getElementById("applicantMobile").value = a?.mobile || "";
+      document.getElementById("applicantEmail").value = a?.email || "";
+      document.getElementById("applicantStatus").value = a?.status || "Active";
+      document.getElementById("applicantNotes").value = a?.notes || "";
+    } else {
+      document.getElementById("applicantParty").value = selectedPartyId || document.getElementById("filterParty").value || "";
+      document.getElementById("applicantName").value = "";
+      document.getElementById("applicantPan").value = "";
+      document.getElementById("applicantDpid").value = "";
+      document.getElementById("applicantCategory").value = "";
+      document.getElementById("applicantDefaultAmt").value = "";
+      document.getElementById("applicantMobile").value = "";
+      document.getElementById("applicantEmail").value = "";
+      document.getElementById("applicantStatus").value = "Active";
+      document.getElementById("applicantNotes").value = "";
+    }
+    document.getElementById("applicantModal").classList.remove("hidden");
+  }
+
+  async function tryDelete(type, id) {
+    pendingDelete = { type, id };
+    const url = type === "party" ? `/api/ipo/parties/${encodeURIComponent(id)}` : `/api/ipo/applicants/${encodeURIComponent(id)}`;
+    TradeSlip.showProgress("Deleting…", "Checking trade links.");
+    try {
+      const response = await TradeSlip.apiFetch(url, { method: "DELETE" });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 409) {
+        document.getElementById("deleteWarnMsg").textContent = payload.detail?.message || TradeSlip.parseErrorDetail(payload);
+        document.getElementById("deleteWarnModal").classList.remove("hidden");
+        return;
+      }
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      if (type === "party" && selectedPartyId === id) selectedPartyId = "";
+      await loadParties();
+      await loadApplicants();
+      setMsg("Deleted.", "success");
+    } catch (e) {
+      setMsg(e.message, "error");
+    } finally {
+      TradeSlip.hideProgress();
+    }
+  }
+
+  document.getElementById("partyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("partyError");
+    err.classList.add("hidden");
+    const id = document.getElementById("partyEditId").value;
+    const body = {
+      name: document.getElementById("partyName").value.trim(),
+      status: document.getElementById("partyStatus").value,
+      notes: document.getElementById("partyNotes").value.trim(),
+    };
+    try {
+      const response = await TradeSlip.apiFetch(id ? `/api/ipo/parties/${encodeURIComponent(id)}` : "/api/ipo/parties", {
+        method: id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      document.getElementById("partyModal").classList.add("hidden");
+      await loadParties();
+      setMsg("Party saved.", "success");
+    } catch (error) {
+      err.textContent = error.message;
+      err.classList.remove("hidden");
+    }
+  });
+
+  document.getElementById("applicantForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("applicantError");
+    err.classList.add("hidden");
+    const id = document.getElementById("applicantEditId").value;
+    const amtRaw = document.getElementById("applicantDefaultAmt").value;
+    const body = {
+      party_id: document.getElementById("applicantParty").value,
+      name: document.getElementById("applicantName").value.trim(),
+      pan: document.getElementById("applicantPan").value.trim(),
+      dpid: document.getElementById("applicantDpid").value.trim(),
+      category: document.getElementById("applicantCategory").value.trim(),
+      mobile: document.getElementById("applicantMobile").value.trim(),
+      email: document.getElementById("applicantEmail").value.trim(),
+      status: document.getElementById("applicantStatus").value,
+      notes: document.getElementById("applicantNotes").value.trim(),
+    };
+    if (amtRaw !== "") body.default_app_amount = Number(amtRaw);
+    else if (id) body.clear_default_app_amount = true;
+    try {
+      const response = await TradeSlip.apiFetch(id ? `/api/ipo/applicants/${encodeURIComponent(id)}` : "/api/ipo/applicants", {
+        method: id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      document.getElementById("applicantModal").classList.add("hidden");
+      selectedPartyId = body.party_id;
+      await loadParties();
+      await loadApplicants();
+      setMsg("Applicant saved.", "success");
+    } catch (error) {
+      err.textContent = error.message;
+      err.classList.remove("hidden");
+    }
+  });
+
+  if (isAdmin) {
+    document.getElementById("addPartyBtn").addEventListener("click", () => openPartyModal(null));
+    document.getElementById("addApplicantBtn").addEventListener("click", () => openApplicantModal(null));
+    document.getElementById("importFile").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      TradeSlip.showProgress("Importing…", "Reading Party / Applicant / PAN / DPID.");
+      try {
+        const response = await TradeSlip.apiFetch("/api/ipo/clients/import", { method: "POST", body: fd });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+        await loadParties();
+        await loadApplicants();
+        setMsg(`Imported: ${payload.applicants_created} new, ${payload.applicants_updated} updated, ${payload.parties_created} parties created.`, "success");
+      } catch (err) {
+        setMsg(err.message, "error");
+      } finally {
+        TradeSlip.hideProgress();
+      }
+    });
+  }
+
+  document.getElementById("partyCancel").addEventListener("click", () => document.getElementById("partyModal").classList.add("hidden"));
+  document.getElementById("applicantCancel").addEventListener("click", () => document.getElementById("applicantModal").classList.add("hidden"));
+  document.getElementById("deleteWarnClose").addEventListener("click", () => {
+    document.getElementById("deleteWarnModal").classList.add("hidden");
+    pendingDelete = null;
+  });
+  document.getElementById("deleteWarnArchive").addEventListener("click", async () => {
+    if (!pendingDelete) return;
+    const url = pendingDelete.type === "party"
+      ? `/api/ipo/parties/${encodeURIComponent(pendingDelete.id)}/archive`
+      : `/api/ipo/applicants/${encodeURIComponent(pendingDelete.id)}/archive`;
+    document.getElementById("deleteWarnModal").classList.add("hidden");
+    const response = await TradeSlip.apiFetch(url, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) { setMsg(TradeSlip.parseErrorDetail(payload), "error"); return; }
+    pendingDelete = null;
+    await loadParties();
+    await loadApplicants();
+    setMsg("Archived.", "success");
+  });
+
+  document.getElementById("applyFilters").addEventListener("click", async () => {
+    selectedPartyId = document.getElementById("filterParty").value || selectedPartyId;
+    await loadApplicants();
+  });
+  document.getElementById("clearFilters").addEventListener("click", async () => {
+    document.getElementById("filterParty").value = "";
+    document.getElementById("filterSearch").value = "";
+    selectedPartyId = "";
+    await loadApplicants();
+  });
+  document.getElementById("showArchived").addEventListener("change", async () => {
+    await loadParties();
+    await loadApplicants();
+  });
+
+  TradeSlip.apiFetch("/api/ipo/category-labels").then(async (r) => {
+    const p = await r.json().catch(() => ({}));
+    if (r.ok) {
+      document.getElementById("catOptions").innerHTML = (p.labels || [])
+        .map((l) => `<option value="${TradeSlip.escapeHtml(l.code)}"></option>`).join("");
+    }
+  });
+
+  loadParties().then(loadApplicants).catch((e) => setMsg(e.message, "error"));
+</script>
+{% endblock %}
