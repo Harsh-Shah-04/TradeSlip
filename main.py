@@ -63,6 +63,7 @@ from utils.ipo.clients import (
     update_applicant,
     update_party,
 )
+from utils.ipo.categories import trade_category_payload
 from utils.ipo.service import (
     archive_ipo,
     clear_position_allocations,
@@ -1163,6 +1164,11 @@ async def ipo_category_labels(_: BrokerAuth) -> JSONResponse:
         logger.exception("Failed to list IPO category labels")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content={"labels": labels})
+
+
+@app.get("/api/ipo/trade-categories")
+async def ipo_trade_categories(_: BrokerAuth) -> JSONResponse:
+    return JSONResponse(content=trade_category_payload())
 
 
 # ---------------------------------------------------------------------------

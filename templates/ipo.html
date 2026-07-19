@@ -50,7 +50,8 @@
           <th class="px-3 py-2">IPO</th>
           <th class="px-3 py-2">Party</th>
           <th class="px-3 py-2">Category</th>
-          <th class="px-3 py-2 text-right">Buy</th>
+          <th class="px-3 py-2">Sub-Cat</th>
+          <th class="px-3 py-2 text-right">Qty</th>
           <th class="px-3 py-2 text-right">Sold</th>
           <th class="px-3 py-2 text-right">Remaining</th>
           <th class="px-3 py-2">Trade</th>
@@ -59,7 +60,7 @@
         </tr>
       </thead>
       <tbody id="posBody" class="divide-y divide-slate-100">
-        <tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+        <tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -86,12 +87,20 @@
       </div>
       <div>
         <label class="block text-sm font-medium mb-1" for="buyCategory">CATEGORY</label>
-        <input type="text" id="buyCategory" list="catOptions" required class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="15K, 2+, 10+, SHARE…" />
+        <select id="buyCategory" required class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="IPO Application">IPO Application</option>
+          <option value="Premium">Premium</option>
+          <option value="Subject 2">Subject 2</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1" for="buySubCategory">SUB-CATEGORY</label>
+        <select id="buySubCategory" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-sm font-medium mb-1" for="buyApp">BUY APP</label>
-          <input type="number" id="buyApp" min="1" step="1" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" id="buyAppLabel" for="buyApp">BUY APP</label>
+          <input type="number" id="buyApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
         <div>
           <label class="block text-sm font-medium mb-1" for="buyRate">BUY RATE</label>
@@ -117,7 +126,7 @@
               <input type="text" id="buySellParty" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
             </div>
             <div>
-              <label class="block text-sm font-medium mb-1" for="buySellApp">SELL APP</label>
+              <label class="block text-sm font-medium mb-1" id="buySellAppLabel" for="buySellApp">SELL APP</label>
               <input type="number" id="buySellApp" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
             </div>
             <div>
@@ -174,7 +183,7 @@
           <input type="text" id="sellParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
         <div>
-          <label class="block text-sm font-medium mb-1" for="sellApp">SELL APP</label>
+          <label class="block text-sm font-medium mb-1" id="sellAppLabel" for="sellApp">SELL APP</label>
           <input type="number" id="sellApp" min="0" step="any" required class="w-full rounded-lg border border-slate-300 px-3 py-2" />
         </div>
         <div>
@@ -330,7 +339,51 @@
     renderPositions();
   }
 
+  let tradeCategoryMeta = null;
+
+  async function loadTradeCategories() {
+    const response = await TradeSlip.apiFetch("/api/ipo/trade-categories");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    tradeCategoryMeta = payload;
+    applyCategoryUI();
+  }
+
+  function applyCategoryUI(preferredSub) {
+    if (!tradeCategoryMeta) return;
+    const cat = document.getElementById("buyCategory").value || "IPO Application";
+    const subs = (tradeCategoryMeta.sub_categories && tradeCategoryMeta.sub_categories[cat]) || [];
+    const subSelect = document.getElementById("buySubCategory");
+    const prev = preferredSub || subSelect.value;
+    if (cat === "Premium") {
+      subSelect.innerHTML = '<option value="Share">Share</option>';
+      subSelect.value = "Share";
+      subSelect.disabled = true;
+    } else {
+      subSelect.disabled = false;
+      subSelect.innerHTML = subs.map((s) =>
+        `<option value="${TradeSlip.escapeHtml(s)}">${TradeSlip.escapeHtml(s)}</option>`
+      ).join("");
+      if (prev && subs.includes(prev)) subSelect.value = prev;
+    }
+    const qtyLabel = (tradeCategoryMeta.quantity_labels && tradeCategoryMeta.quantity_labels[cat]) || "BUY APP";
+    const sellQty = (tradeCategoryMeta.sell_quantity_labels && tradeCategoryMeta.sell_quantity_labels[cat]) || "SELL APP";
+    document.getElementById("buyAppLabel").textContent = qtyLabel;
+    document.getElementById("buySellAppLabel").textContent = sellQty;
+    const buyApp = document.getElementById("buyApp");
+    if (cat === "Premium") {
+      buyApp.step = "any";
+      buyApp.min = "0";
+    } else {
+      buyApp.step = "1";
+      buyApp.min = "1";
+    }
+  }
+
+  document.getElementById("buyCategory").addEventListener("change", () => applyCategoryUI());
+
   async function loadLabels() {
+    // Kept for Client Master compatibility; buy form uses trade-categories
     const response = await TradeSlip.apiFetch("/api/ipo/category-labels");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) return;
@@ -342,26 +395,28 @@
   function renderPositions() {
     document.getElementById("posCount").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
     if (!positions.length) {
-      posBody.innerHTML = '<tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">No positions yet. Record a buy against an Active IPO.</td></tr>';
+      posBody.innerHTML = '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No positions yet. Record a buy against an Active IPO.</td></tr>';
       return;
     }
     posBody.innerHTML = positions
       .map((p) => {
         const ipoName = (p.ipo && (p.ipo.display_name || p.ipo.name)) || "—";
+        const qtyHint = p.is_premium ? "sh" : "app";
         return `<tr class="hover:bg-slate-50">
           <td class="px-3 py-2">${TradeSlip.escapeHtml(p.trade_date)}</td>
           <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(ipoName)}</td>
           <td class="px-3 py-2">${TradeSlip.escapeHtml(p.party)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.category)}</td>
-          <td class="px-3 py-2 text-right">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.category || "—")}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.sub_category || "—")}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)} <span class="text-xs text-slate-400">${qtyHint}</span></td>
           <td class="px-3 py-2 text-right">${fmt(p.sold_app)}</td>
           <td class="px-3 py-2 text-right font-semibold">${fmt(p.remaining_app)}</td>
           <td class="px-3 py-2">${statusBadge(p.status)}</td>
-          <td class="px-3 py-2">${statusBadge(p.allocation_status || "Unallocated")}<div class="text-xs text-slate-500 mt-0.5">${p.allocated_count || 0}/${Math.round(p.buy_app)}</div></td>
+          <td class="px-3 py-2">${p.is_premium ? '<span class="text-xs text-slate-500">N/A</span>' : `${statusBadge(p.allocation_status || "Unallocated")}<div class="text-xs text-slate-500 mt-0.5">${p.allocated_count || 0}/${Math.round(p.buy_app)}</div>`}</td>
           <td class="px-3 py-2 text-right space-x-1 whitespace-nowrap">
             <button type="button" class="open-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Open / Sell</button>
             <button type="button" class="edit-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</button>
-            <button type="button" class="alloc-pos rounded border border-emerald-200 text-emerald-800 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Allocate</button>
+            ${p.is_premium ? "" : `<button type="button" class="alloc-pos rounded border border-emerald-200 text-emerald-800 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Allocate</button>`}
             <button type="button" class="del-pos rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>
           </td>
         </tr>`;
@@ -471,7 +526,8 @@
     fillBuyIpoSelect(null);
     document.getElementById("buyDate").value = TradeSlip.todayIso();
     document.getElementById("buyParty").value = "";
-    document.getElementById("buyCategory").value = "";
+    document.getElementById("buyCategory").value = "IPO Application";
+    applyCategoryUI();
     document.getElementById("buyApp").value = "";
     document.getElementById("buyRate").value = "";
     document.getElementById("buyAmtPreview").textContent = "0";
@@ -504,7 +560,8 @@
     fillBuyIpoSelect(payload.ipo_id);
     document.getElementById("buyDate").value = (payload.trade_date || "").slice(0, 10);
     document.getElementById("buyParty").value = payload.party_id || "";
-    document.getElementById("buyCategory").value = payload.category || "";
+    document.getElementById("buyCategory").value = payload.category || "IPO Application";
+    applyCategoryUI(payload.sub_category || "");
     document.getElementById("buyApp").value = payload.buy_app ?? "";
     document.getElementById("buyRate").value = payload.buy_rate ?? "";
     recalcBuy();
@@ -542,7 +599,8 @@
       ipo_id: document.getElementById("buyIpo").value,
       trade_date: document.getElementById("buyDate").value,
       party_id: document.getElementById("buyParty").value,
-      category: document.getElementById("buyCategory").value.trim(),
+      category: document.getElementById("buyCategory").value,
+      sub_category: document.getElementById("buySubCategory").value,
       buy_app: Number(document.getElementById("buyApp").value),
       buy_rate: Number(document.getElementById("buyRate").value),
     };
@@ -609,14 +667,22 @@
       currentDetail = payload;
       const ipoName = (payload.ipo && (payload.ipo.display_name || payload.ipo.name)) || "";
       document.getElementById("detailTitle").textContent = `${payload.party} · ${ipoName}`;
-      document.getElementById("detailSub").textContent = `${payload.trade_date} · ${payload.category} · ${payload.status}`;
+      document.getElementById("detailSub").textContent = `${payload.trade_date} · ${payload.category}${payload.sub_category ? " / " + payload.sub_category : ""} · ${payload.status}`;
+      const qtyLabel = payload.quantity_label || "BUY APP";
       document.getElementById("detailSummary").innerHTML = `
-        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">BUY APP</div><div class="font-semibold">${fmt(payload.buy_app)}</div></div>
+        <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">${TradeSlip.escapeHtml(qtyLabel)}</div><div class="font-semibold">${fmt(payload.buy_app)}</div></div>
         <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">Sold</div><div class="font-semibold">${fmt(payload.sold_app)}</div></div>
         <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">Remaining</div><div class="font-semibold">${fmt(payload.remaining_app)}</div></div>
         <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">BUY AMT</div><div class="font-semibold">${fmt(payload.buy_amt)}</div></div>`;
       fillAllocSummary(payload);
-      document.getElementById("openAllocBtn").onclick = () => openAllocModal(payload.id);
+      const allocWrap = document.getElementById("openAllocBtn").closest(".mb-4");
+      if (payload.is_premium) {
+        allocWrap.classList.add("hidden");
+      } else {
+        allocWrap.classList.remove("hidden");
+        document.getElementById("openAllocBtn").onclick = () => openAllocModal(payload.id);
+      }
+      document.getElementById("sellAppLabel").textContent = payload.sell_quantity_label || "SELL APP";
       const sells = payload.sells || [];
       document.getElementById("sellsList").innerHTML = sells.length
         ? sells
@@ -701,6 +767,10 @@
         if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         currentDetail = payload;
         upsertPositionLocal(payload);
+      }
+      if (payload.is_premium) {
+        alert("Applicant allocation is not used for Premium (share) trades.");
+        return;
       }
       if (!payload.party_id) {
         alert("This position has no Client Master party linked.");
@@ -851,6 +921,6 @@
     loadPositions();
   });
 
-  Promise.all([loadLabels(), loadActiveIpos(), loadClientMaster()]).then(loadPositions);
+  Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster()]).then(loadPositions);
 </script>
 {% endblock %}

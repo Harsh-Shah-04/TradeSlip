@@ -141,6 +141,7 @@ class PositionCreate(BaseModel):
     trade_date: str = Field(min_length=10, max_length=10)
     party_id: str = Field(min_length=1)
     category: str = Field(min_length=1, max_length=100)
+    sub_category: str = Field(default="", max_length=100)
     buy_app: float = Field(gt=0)
     buy_rate: float = Field(ge=0)
     # Optional immediate sell (Workflow 1)
@@ -151,9 +152,9 @@ class PositionCreate(BaseModel):
     sell_rate: float | None = Field(default=None, ge=0)
     sell_dalal: float | None = None
 
-    @field_validator("category")
+    @field_validator("category", "sub_category")
     @classmethod
-    def strip_text(cls, value: str) -> str:
+    def strip_cat(cls, value: str) -> str:
         return _strip(value)
 
     @field_validator("sell_party")
@@ -165,13 +166,19 @@ class PositionCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_optional_sell(self) -> PositionCreate:
+        from utils.ipo.categories import validate_category_pair
+
+        cat, sub = validate_category_pair(self.category, self.sub_category)
+        object.__setattr__(self, "category", cat)
+        object.__setattr__(self, "sub_category", sub)
+
         if not self.include_sell:
             return self
         missing: list[str] = []
         if not (self.sell_party or "").strip():
             missing.append("Sell Party")
         if self.sell_app is None:
-            missing.append("Sell Applications")
+            missing.append("Sell Applications" if cat != "Premium" else "Sell Shares")
         if self.sell_rate is None:
             missing.append("Sell Rate")
         if missing:
@@ -183,8 +190,9 @@ class PositionCreate(BaseModel):
         if not self.sell_date:
             self.sell_date = self.trade_date
         if float(self.sell_app or 0) > float(self.buy_app) + 1e-9:
+            qty = "shares" if cat == "Premium" else "applications"
             raise ValueError(
-                f"SELL APP ({self.sell_app}) cannot exceed BUY APP ({self.buy_app})."
+                f"Sell {qty} ({self.sell_app}) cannot exceed buy {qty} ({self.buy_app})."
             )
         return self
 
@@ -193,6 +201,7 @@ class PositionUpdate(BaseModel):
     trade_date: str | None = Field(default=None, min_length=10, max_length=10)
     party_id: str | None = None
     category: str | None = Field(default=None, min_length=1, max_length=100)
+    sub_category: str | None = Field(default=None, max_length=100)
     buy_app: float | None = Field(default=None, gt=0)
     buy_rate: float | None = Field(default=None, ge=0)
     ipo_id: str | None = None
@@ -348,9 +357,12 @@ def position_to_json(
     ipo: dict[str, Any] | None = None,
     allocations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    from utils.ipo.categories import is_premium, quantity_label, sell_quantity_label
+
     buy_app = float(row.get("buy_app") or 0)
     remaining = max(buy_app - sold_app, 0.0)
     allocs = allocations or []
+    category = row.get("category") or ""
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -359,8 +371,12 @@ def position_to_json(
         "trade_date": _iso(row.get("trade_date")),
         "party_id": str(row.get("party_id") or "") or None,
         "party": row.get("party"),
-        "category": row.get("category"),
+        "category": category,
+        "sub_category": row.get("sub_category") or "",
         "category_group": row.get("category_group"),
+        "is_premium": is_premium(category),
+        "quantity_label": quantity_label(category),
+        "sell_quantity_label": sell_quantity_label(category),
         "applicant_name": row.get("applicant_name") or "",
         "buy_app": buy_app,
         "buy_rate": float(row.get("buy_rate") or 0),

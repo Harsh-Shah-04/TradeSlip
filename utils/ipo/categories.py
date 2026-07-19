@@ -1,33 +1,141 @@
 from __future__ import annotations
 
-# Excel shorthand labels → future category group.
-# Phase 1 stores the shorthand on each trade; group is snapshotted when known.
+# Trade Category (main) + Sub-Category (depends on Category).
 
+TRADE_CATEGORIES: list[str] = [
+    "IPO Application",
+    "Premium",
+    "Subject 2",
+]
+
+# Shared application-style sub-categories for IPO Application and Subject 2
+APPLICATION_SUB_CATEGORIES: list[str] = [
+    "15K",
+    "2-",
+    "2+",
+    "10+",
+    "15K Shareholder",
+    "2- Shareholder",
+]
+
+PREMIUM_SUB_CATEGORIES: list[str] = [
+    "Share",
+]
+
+SUB_CATEGORIES_BY_CATEGORY: dict[str, list[str]] = {
+    "IPO Application": APPLICATION_SUB_CATEGORIES,
+    "Subject 2": APPLICATION_SUB_CATEGORIES,
+    "Premium": PREMIUM_SUB_CATEGORIES,
+}
+
+# Legacy Excel / Phase-1 shorthands → new Sub-Category labels
+LEGACY_SUB_CATEGORY_MAP: dict[str, str] = {
+    "15K": "15K",
+    "2+": "2+",
+    "10+": "10+",
+    "2-": "2-",
+    "2-SHARE": "2-",
+    "2- SHARE": "2-",
+    "15K (SHAREHOLDER)": "15K Shareholder",
+    "15K SHAREHOLDER": "15K Shareholder",
+    "15K (Shareholder)": "15K Shareholder",
+    "SHARE": "2- Shareholder",
+    "2- SHAREHOLDER": "2- Shareholder",
+    "2-Shareholder": "2- Shareholder",
+    "Retail": "15K",
+    "Small HNI": "2+",
+    "sHNI": "2+",
+    "Big HNI": "10+",
+    "bHNI": "10+",
+    "Shareholder": "2- Shareholder",
+}
+
+
+def is_premium(category: str | None) -> bool:
+    return (category or "").strip() == "Premium"
+
+
+def quantity_label(category: str | None) -> str:
+    return "No. of Shares" if is_premium(category) else "BUY APP"
+
+
+def sell_quantity_label(category: str | None) -> str:
+    return "SELL SHARES" if is_premium(category) else "SELL APP"
+
+
+def normalize_sub_category(raw: str | None) -> str:
+    key = (raw or "").strip()
+    if not key:
+        return ""
+    mapped = LEGACY_SUB_CATEGORY_MAP.get(key) or LEGACY_SUB_CATEGORY_MAP.get(key.upper())
+    if mapped:
+        return mapped
+    # Case-insensitive match against known application subs
+    for code in APPLICATION_SUB_CATEGORIES + PREMIUM_SUB_CATEGORIES:
+        if code.casefold() == key.casefold():
+            return code
+    return key
+
+
+def sub_categories_for(category: str | None) -> list[str]:
+    return list(SUB_CATEGORIES_BY_CATEGORY.get((category or "").strip(), []))
+
+
+def validate_category_pair(category: str, sub_category: str) -> tuple[str, str]:
+    cat = (category or "").strip()
+    if cat not in TRADE_CATEGORIES:
+        raise ValueError(
+            f"Category must be one of: {', '.join(TRADE_CATEGORIES)}."
+        )
+    sub = normalize_sub_category(sub_category)
+    allowed = sub_categories_for(cat)
+    if cat == "Premium":
+        sub = "Share"
+    elif sub not in allowed:
+        raise ValueError(
+            f"Sub-Category '{sub_category}' is not valid for {cat}. "
+            f"Choose one of: {', '.join(allowed)}."
+        )
+    return cat, sub
+
+
+def trade_category_payload() -> dict[str, object]:
+    return {
+        "categories": TRADE_CATEGORIES,
+        "sub_categories": SUB_CATEGORIES_BY_CATEGORY,
+        "quantity_labels": {
+            "IPO Application": "BUY APP",
+            "Subject 2": "BUY APP",
+            "Premium": "No. of Shares",
+        },
+        "sell_quantity_labels": {
+            "IPO Application": "SELL APP",
+            "Subject 2": "SELL APP",
+            "Premium": "SELL SHARES",
+        },
+    }
+
+
+# Keep legacy seeds for Client Master applicant optional category hints
 CATEGORY_SEEDS: list[dict[str, object]] = [
-    {"code": "15K", "category_group": "Retail", "display_order": 10},
-    {"code": "2-SHARE", "category_group": "Retail", "display_order": 20},
-    {"code": "2- SHARE", "category_group": "Retail", "display_order": 21},
-    {"code": "2+", "category_group": "Small HNI", "display_order": 30},
-    {"code": "10+", "category_group": "Big HNI", "display_order": 40},
-    {"code": "SHARE", "category_group": "Shareholder", "display_order": 50},
-    {"code": "15K (Shareholder)", "category_group": "Shareholder", "display_order": 60},
-    {"code": "Retail", "category_group": "Retail", "display_order": 5},
-    {"code": "Small HNI", "category_group": "Small HNI", "display_order": 25},
-    {"code": "sHNI", "category_group": "Small HNI", "display_order": 26},
-    {"code": "Big HNI", "category_group": "Big HNI", "display_order": 35},
-    {"code": "bHNI", "category_group": "Big HNI", "display_order": 36},
-    {"code": "Shareholder", "category_group": "Shareholder", "display_order": 45},
+    {"code": code, "category_group": None, "display_order": i * 10}
+    for i, code in enumerate(APPLICATION_SUB_CATEGORIES, start=1)
 ]
 
 
 def category_group_for(label: str) -> str | None:
-    key = (label or "").strip()
-    if not key:
-        return None
-    for row in CATEGORY_SEEDS:
-        if str(row["code"]).casefold() == key.casefold():
-            return str(row["category_group"])
-    return None
+    """Legacy helper — prefer trade Category now; still map sub-category shorthands."""
+    sub = normalize_sub_category(label)
+    mapping = {
+        "15K": "Retail",
+        "2-": "Retail",
+        "2+": "Small HNI",
+        "10+": "Big HNI",
+        "15K Shareholder": "Shareholder",
+        "2- Shareholder": "Shareholder",
+        "Share": "Premium",
+    }
+    return mapping.get(sub)
 
 
 def normalize_mail(value: str | None) -> str:

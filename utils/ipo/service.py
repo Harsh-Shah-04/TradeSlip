@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from utils.ipo.categories import category_group_for
+from utils.ipo.categories import category_group_for, is_premium, validate_category_pair
 from utils.ipo.clients import get_applicant, get_party
 from utils.ipo.models import (
     AllocationSet,
@@ -442,7 +442,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     buy_amt = (_money(payload.buy_app) * _money(payload.buy_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
-    category = payload.category.strip()
+    category, sub_category = validate_category_pair(payload.category, payload.sub_category)
     row = {
         "broker_id": broker_id,
         "ipo_id": payload.ipo_id,
@@ -450,7 +450,8 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "party_id": payload.party_id,
         "party": party_name,
         "category": category,
-        "category_group": category_group_for(category),
+        "sub_category": sub_category,
+        "category_group": category_group_for(sub_category) or category,
         "applicant_id": None,
         "applicant_name": "",
         "buy_app": float(_money(payload.buy_app)),
@@ -549,9 +550,16 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
 
     buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
     buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
-    category = (
-        payload.category.strip() if payload.category is not None else existing["category"]
-    )
+
+    category = existing["category"]
+    sub_category = existing.get("sub_category") or ""
+    if payload.category is not None or payload.sub_category is not None:
+        category, sub_category = validate_category_pair(
+            payload.category if payload.category is not None else existing["category"],
+            payload.sub_category
+            if payload.sub_category is not None
+            else (existing.get("sub_category") or ""),
+        )
 
     party_id = existing.get("party_id")
     party_name = existing["party"]
@@ -567,7 +575,6 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         party_name = party.get("name") or party_name
     elif payload.party_id is not None:
         party_id = payload.party_id
-        # Keep existing party name unless we need a refresh
         if not party_name:
             party = get_party(payload.party_id, include_applicant_count=False)
             party_name = party.get("name") or party_name
@@ -578,7 +585,8 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         "party_id": party_id,
         "party": party_name,
         "category": category,
-        "category_group": category_group_for(category),
+        "sub_category": sub_category,
+        "category_group": category_group_for(sub_category) or category,
         "buy_app": float(_money(buy_app)),
         "buy_rate": float(_money(buy_rate)),
         "buy_amt": float(buy_amt),
@@ -750,8 +758,14 @@ def set_position_allocations(
     """
     Allocate applicants from the buy party onto a position.
     Count must exactly equal BUY APP (whole number) to mark Fully Allocated.
+    Not used for Premium (share) trades.
     """
     position = get_position(broker_id, position_id)
+    if is_premium(position.get("category")):
+        raise ValueError(
+            "Applicant allocation is for IPO Application / Subject 2 trades only. "
+            "Premium trades use number of shares, not applications."
+        )
     buy_app = float(position["buy_app"])
     required = int(round(buy_app))
     if abs(buy_app - required) > 1e-9:
