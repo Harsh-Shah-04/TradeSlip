@@ -37,6 +37,15 @@ from utils.auth import (
     validate_auth_config,
 )
 from utils.pdf_processor import GeneratedSlip, parse_trade_date_partitions, process_trades_csv
+from utils.ipo.models import IpoTradeCreate, IpoTradeUpdate
+from utils.ipo.service import (
+    create_trade as create_ipo_trade,
+    delete_trade as delete_ipo_trade,
+    import_trades_csv as import_ipo_trades_csv,
+    list_category_labels as list_ipo_category_labels,
+    list_trades as list_ipo_trades,
+    update_trade as update_ipo_trade,
+)
 from utils.supabase_client import (
     broker_owns_storage_path,
     change_user_password,
@@ -289,6 +298,7 @@ def page_context(request: Request, broker: BrokerSession | None, **extra: object
         "broker": broker,
         "nav_active": extra.pop("nav_active", ""),
         "is_admin": bool(broker and broker.is_admin),
+        "module": extra.pop("module", "tradeslip"),
     }
     ctx.update(extra)
     return ctx
@@ -516,6 +526,19 @@ async def admin_users_page(
     return templates.TemplateResponse(
         "admin_users.html",
         page_context(request, broker, nav_active="admin"),
+    )
+
+
+@app.get("/ipo", response_class=HTMLResponse)
+async def ipo_page(
+    request: Request,
+    broker: Annotated[BrokerSession | None, Depends(optional_broker)] = None,
+):
+    if broker is None:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "ipo.html",
+        page_context(request, broker, nav_active="ipo", module="ipo"),
     )
 
 
@@ -1062,6 +1085,120 @@ async def admin_deactivate_broker(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content=broker_to_json(row))
+
+
+# ---------------------------------------------------------------------------
+# IPO Trading API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/ipo/category-labels")
+async def ipo_category_labels(broker: BrokerAuth) -> JSONResponse:
+    try:
+        labels = await asyncio.to_thread(list_ipo_category_labels)
+    except Exception as exc:
+        logger.exception("Failed to list IPO category labels")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"labels": labels})
+
+
+@app.get("/api/ipo/trades")
+async def ipo_get_trades(
+    broker: BrokerAuth,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    script: str | None = Query(default=None),
+    party: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    sell_party: str | None = Query(default=None),
+    mail: str | None = Query(default=None),
+) -> JSONResponse:
+    if date_from:
+        validate_trade_date_iso(date_from)
+    if date_to:
+        validate_trade_date_iso(date_to)
+    try:
+        trades = await asyncio.to_thread(
+            list_ipo_trades,
+            broker.id,
+            date_from=date_from,
+            date_to=date_to,
+            script=script,
+            party=party,
+            category=category,
+            sell_party=sell_party,
+            mail=mail,
+        )
+    except Exception as exc:
+        logger.exception("Failed to list IPO trades")
+        raise HTTPException(status_code=500, detail=f"Failed to load IPO trades: {exc}") from exc
+    return JSONResponse(content={"trades": trades})
+
+
+@app.post("/api/ipo/trades")
+async def ipo_create_trade(broker: BrokerAuth, payload: IpoTradeCreate) -> JSONResponse:
+    try:
+        validate_trade_date_iso(payload.trade_date)
+        trade = await asyncio.to_thread(create_ipo_trade, broker.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to create IPO trade")
+        raise HTTPException(status_code=500, detail=f"Create failed: {exc}") from exc
+    return JSONResponse(content=trade, status_code=201)
+
+
+@app.patch("/api/ipo/trades/{trade_id}")
+async def ipo_patch_trade(
+    broker: BrokerAuth,
+    trade_id: str,
+    payload: IpoTradeUpdate,
+) -> JSONResponse:
+    try:
+        if payload.trade_date:
+            validate_trade_date_iso(payload.trade_date)
+        trade = await asyncio.to_thread(update_ipo_trade, broker.id, trade_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to update IPO trade %s", trade_id)
+        raise HTTPException(status_code=500, detail=f"Update failed: {exc}") from exc
+    return JSONResponse(content=trade)
+
+
+@app.delete("/api/ipo/trades/{trade_id}")
+async def ipo_delete_trade(broker: BrokerAuth, trade_id: str) -> JSONResponse:
+    try:
+        await asyncio.to_thread(delete_ipo_trade, broker.id, trade_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to delete IPO trade %s", trade_id)
+        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
+    return JSONResponse(content={"deleted": True, "id": trade_id})
+
+
+@app.post("/api/ipo/trades/import")
+async def ipo_import_trades(
+    broker: BrokerAuth,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a CSV export of your Excel sheet.")
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="CSV file is empty.")
+    try:
+        result = await asyncio.to_thread(import_ipo_trades_csv, broker.id, file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("IPO CSV import failed")
+        raise HTTPException(status_code=500, detail=f"Import failed: {exc}") from exc
+    return JSONResponse(content=result)
 
 
 # Run locally: uvicorn main:app --reload

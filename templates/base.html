@@ -24,6 +24,11 @@
       </div>
       <div class="flex items-center gap-3 text-sm">
         <span class="text-slate-600">{{ broker.display_name }} <span class="text-slate-400">({{ broker.email }})</span></span>
+        {% if module == 'ipo' %}
+        <a href="/dashboard" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Trade Slips</a>
+        {% else %}
+        <a href="/ipo" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-100">IPO Trading</a>
+        {% endif %}
         <button type="button" id="navLogoutBtn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Logout</button>
       </div>
     </div>
