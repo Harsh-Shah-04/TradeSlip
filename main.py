@@ -1357,20 +1357,24 @@ async def ipo_list_applicants(
     status: str | None = Query(default=None),
     search: str | None = Query(default=None),
     category: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
 ) -> JSONResponse:
     try:
-        items = await asyncio.to_thread(
+        payload = await asyncio.to_thread(
             list_applicants,
             party_id=party_id,
             include_archived=include_archived,
             status=status,
             search=search,
             category=category,
+            page=page,
+            page_size=page_size,
         )
     except Exception as exc:
         logger.exception("Failed to list applicants")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return JSONResponse(content={"applicants": items})
+    return JSONResponse(content=payload)
 
 
 @app.post("/api/ipo/applicants")

@@ -76,6 +76,13 @@
         </tbody>
       </table>
     </div>
+    <div id="applicantPager" class="hidden px-4 py-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-sm">
+      <p id="applicantPageInfo" class="text-slate-500"></p>
+      <div class="flex items-center gap-2">
+        <button type="button" id="applicantPrev" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 disabled:opacity-40">Previous</button>
+        <button type="button" id="applicantNext" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 disabled:opacity-40">Next</button>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -194,10 +201,18 @@
   let applicants = [];
   let selectedPartyId = "";
   let pendingDelete = null; // { type: 'party'|'applicant', id }
+  let applicantPage = 1;
+  const APPLICANT_PAGE_SIZE = 50;
+  let applicantTotal = 0;
+  let applicantTotalPages = 1;
 
   const clientStatus = document.getElementById("clientStatus");
   const partyList = document.getElementById("partyList");
   const applicantBody = document.getElementById("applicantBody");
+  const applicantPager = document.getElementById("applicantPager");
+  const applicantPageInfo = document.getElementById("applicantPageInfo");
+  const applicantPrev = document.getElementById("applicantPrev");
+  const applicantNext = document.getElementById("applicantNext");
 
   function setMsg(msg, tone) {
     clientStatus.textContent = msg || "";
@@ -239,7 +254,7 @@
         selectedPartyId = btn.dataset.id;
         document.getElementById("filterParty").value = selectedPartyId;
         renderParties();
-        loadApplicants();
+        loadApplicants({ resetPage: true });
       });
     });
     if (isAdmin) {
@@ -258,13 +273,22 @@
   function renderApplicants() {
     const party = parties.find((p) => p.id === selectedPartyId);
     document.getElementById("applicantPartyLabel").textContent = party ? `· ${party.name}` : "";
-    document.getElementById("applicantCount").textContent = String(applicants.length);
+    const showing = applicants.length;
+    if (applicantTotal > 0) {
+      const from = (applicantPage - 1) * APPLICANT_PAGE_SIZE + (showing ? 1 : 0);
+      const to = (applicantPage - 1) * APPLICANT_PAGE_SIZE + showing;
+      document.getElementById("applicantCount").textContent = `${from}–${to} of ${applicantTotal}`;
+    } else {
+      document.getElementById("applicantCount").textContent = "0";
+    }
     if (!selectedPartyId && !document.getElementById("filterSearch").value.trim()) {
       applicantBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Select a party</td></tr>';
+      applicantPager.classList.add("hidden");
       return;
     }
     if (!applicants.length) {
       applicantBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No applicants found.</td></tr>';
+      applicantPager.classList.add("hidden");
       return;
     }
     applicantBody.innerHTML = applicants.map((a) => `<tr class="hover:bg-slate-50">
@@ -279,6 +303,15 @@
         <button type="button" class="del-app rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(a.id)}">Delete</button>` : "—"}
       </td>
     </tr>`).join("");
+
+    if (applicantTotalPages > 1) {
+      applicantPager.classList.remove("hidden");
+      applicantPageInfo.textContent = `Page ${applicantPage} of ${applicantTotalPages}`;
+      applicantPrev.disabled = applicantPage <= 1;
+      applicantNext.disabled = applicantPage >= applicantTotalPages;
+    } else {
+      applicantPager.classList.add("hidden");
+    }
 
     if (isAdmin) {
       applicantBody.querySelectorAll(".edit-app").forEach((btn) => btn.addEventListener("click", () => openApplicantModal(btn.dataset.id)));
@@ -305,7 +338,8 @@
     renderParties();
   }
 
-  async function loadApplicants() {
+  async function loadApplicants({ resetPage = false } = {}) {
+    if (resetPage) applicantPage = 1;
     const params = new URLSearchParams();
     const partyFilter = document.getElementById("filterParty").value;
     const search = document.getElementById("filterSearch").value.trim();
@@ -315,12 +349,26 @@
     } else if (selectedPartyId && !search) {
       params.set("party_id", selectedPartyId);
     }
+    // Defer applicants until a party is chosen or a search is entered.
+    if (!params.get("party_id") && !search) {
+      applicants = [];
+      applicantTotal = 0;
+      applicantTotalPages = 1;
+      renderParties();
+      renderApplicants();
+      return;
+    }
     if (search) params.set("search", search);
     if (document.getElementById("showArchived").checked) params.set("include_archived", "true");
+    params.set("page", String(applicantPage));
+    params.set("page_size", String(APPLICANT_PAGE_SIZE));
     const response = await TradeSlip.apiFetch(`/api/ipo/applicants?${params}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
     applicants = payload.applicants || [];
+    applicantTotal = Number(payload.total || applicants.length);
+    applicantTotalPages = Number(payload.total_pages || 1);
+    applicantPage = Number(payload.page || applicantPage);
     renderParties();
     renderApplicants();
   }
@@ -511,17 +559,33 @@
 
   document.getElementById("applyFilters").addEventListener("click", async () => {
     selectedPartyId = document.getElementById("filterParty").value || selectedPartyId;
-    await loadApplicants();
+    await loadApplicants({ resetPage: true });
   });
   document.getElementById("clearFilters").addEventListener("click", async () => {
     document.getElementById("filterParty").value = "";
     document.getElementById("filterSearch").value = "";
     selectedPartyId = "";
-    await loadApplicants();
+    applicants = [];
+    applicantTotal = 0;
+    applicantTotalPages = 1;
+    applicantPage = 1;
+    renderParties();
+    renderApplicants();
   });
   document.getElementById("showArchived").addEventListener("change", async () => {
     await loadParties();
-    await loadApplicants();
+    await loadApplicants({ resetPage: true });
+  });
+
+  applicantPrev.addEventListener("click", () => {
+    if (applicantPage <= 1) return;
+    applicantPage -= 1;
+    loadApplicants().catch((e) => setMsg(e.message, "error"));
+  });
+  applicantNext.addEventListener("click", () => {
+    if (applicantPage >= applicantTotalPages) return;
+    applicantPage += 1;
+    loadApplicants().catch((e) => setMsg(e.message, "error"));
   });
 
   TradeSlip.apiFetch("/api/ipo/category-labels").then(async (r) => {
@@ -532,6 +596,7 @@
     }
   });
 
-  loadParties().then(loadApplicants).catch((e) => setMsg(e.message, "error"));
+  // Parties only on first paint; applicants load after a party is selected.
+  loadParties().catch((e) => setMsg(e.message, "error"));
 </script>
 {% endblock %}

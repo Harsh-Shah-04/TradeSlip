@@ -24,9 +24,19 @@ POSITIONS_TABLE = "ipo_positions"
 SELL_APPLICANTS_TABLE = "ipo_sell_applicants"
 HTTP_TIMEOUT = 30.0
 
+_http_client: httpx.Client | None = None
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _http() -> httpx.Client:
+    """Reuse one client so warm serverless instances skip repeated TLS handshakes."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+    return _http_client
 
 
 # ---------------------------------------------------------------------------
@@ -40,10 +50,12 @@ def list_parties(
     status: str | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
+    # Embed applicant counts in one round-trip (avoid downloading all applicant rows).
     params: dict[str, str] = {
-        "select": "*",
+        "select": "*,ipo_applicants(count)",
         "order": "name.asc",
         "limit": "2000",
+        "ipo_applicants.is_archived": "eq.false",
     }
     if not include_archived:
         params["is_archived"] = "eq.false"
@@ -52,7 +64,7 @@ def list_parties(
     if search and search.strip():
         params["name"] = f"ilike.*{search.strip()}*"
 
-    response = httpx.get(
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(),
         params=params,
@@ -64,13 +76,29 @@ def list_parties(
     if not isinstance(rows, list):
         rows = []
 
-    party_ids = [str(r["id"]) for r in rows]
-    counts = _applicant_counts(party_ids)
-    return [party_to_json(r, applicant_count=counts.get(str(r["id"]), 0)) for r in rows]
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        count = _embedded_count(row.pop("ipo_applicants", None))
+        result.append(party_to_json(row, applicant_count=count))
+    return result
+
+
+def _embedded_count(raw: Any) -> int:
+    if isinstance(raw, list) and raw:
+        try:
+            return int(raw[0].get("count") or 0)
+        except (TypeError, ValueError, AttributeError):
+            return 0
+    if isinstance(raw, dict):
+        try:
+            return int(raw.get("count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 def get_party(party_id: str, *, include_applicant_count: bool = True) -> dict[str, Any]:
-    response = httpx.get(
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "id": f"eq.{party_id}", "limit": "1"},
@@ -92,7 +120,7 @@ def find_party_by_name(name: str) -> dict[str, Any] | None:
     needle = name.strip()
     if not needle:
         return None
-    response = httpx.get(
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(),
         params={
@@ -126,7 +154,7 @@ def create_party(payload: PartyCreate) -> dict[str, Any]:
         "is_archived": False,
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _http().post(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -156,7 +184,7 @@ def update_party(party_id: str, payload: PartyUpdate) -> dict[str, Any]:
         patch["status"] = payload.status
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
-    response = httpx.patch(
+    response = _http().patch(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -175,7 +203,7 @@ def archive_party(party_id: str) -> dict[str, Any]:
 
 
 def count_position_links_for_party(party_id: str) -> int:
-    response = httpx.get(
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers={**_service_headers(), "Prefer": "count=exact"},
         params={"select": "id", "party_id": f"eq.{party_id}", "limit": "1"},
@@ -192,7 +220,7 @@ def count_position_links_for_party(party_id: str) -> int:
 
 def delete_party(party_id: str) -> None:
     get_party(party_id)
-    applicants = list_applicants(party_id=party_id, include_archived=True)
+    applicants = list_applicants(party_id=party_id, include_archived=True)["applicants"]
     for app in applicants:
         trade_count = count_links_for_applicant(app["id"])
         if trade_count > 0:
@@ -209,7 +237,7 @@ def delete_party(party_id: str) -> None:
     # Delete applicants first
     for app in applicants:
         _hard_delete_applicant(app["id"])
-    response = httpx.delete(
+    response = _http().delete(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"id": f"eq.{party_id}"},
@@ -225,7 +253,7 @@ def _applicant_counts(party_ids: list[str]) -> dict[str, int]:
     counts: dict[str, int] = {pid: 0 for pid in party_ids}
     for i in range(0, len(party_ids), 50):
         chunk = party_ids[i : i + 50]
-        response = httpx.get(
+        response = _http().get(
             f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
             headers=_service_headers(),
             params={
@@ -257,11 +285,19 @@ def list_applicants(
     status: str | None = None,
     search: str | None = None,
     category: str | None = None,
-) -> list[dict[str, Any]]:
+    include_party: bool = False,
+    page: int | None = None,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    """
+    List applicants. When ``page`` is set, returns a page with exact total.
+    When ``page`` is None, returns up to 5000 rows (allocation / import callers).
+    """
+    page_size = max(1, min(int(page_size or 50), 200))
     params: dict[str, str] = {
-        "select": "*",
+        # Slim projection — UI and allocation pickers only need these fields.
+        "select": "id,party_id,name,pan,dpid,category,default_app_amount,mobile,email,notes,status,is_archived,created_at,updated_at",
         "order": "name.asc",
-        "limit": "5000",
     }
     if party_id:
         params["party_id"] = f"eq.{party_id}"
@@ -272,31 +308,67 @@ def list_applicants(
     if category and category.strip():
         params["category"] = f"ilike.*{category.strip()}*"
     if search and search.strip():
-        # PostgREST or filter
         q = search.strip()
         params["or"] = f"(name.ilike.*{q}*,pan.ilike.*{q}*,dpid.ilike.*{q}*)"
 
-    response = httpx.get(
+    headers = _service_headers()
+    paginate = page is not None
+    if paginate:
+        page = max(1, int(page))
+        offset = (page - 1) * page_size
+        params["limit"] = str(page_size)
+        params["offset"] = str(offset)
+        headers = {**headers, "Prefer": "count=exact"}
+    else:
+        page = 1
+        params["limit"] = "5000"
+
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
-        headers=_service_headers(),
+        headers=headers,
         params=params,
         timeout=HTTP_TIMEOUT,
     )
-    if response.status_code != 200:
+    if response.status_code not in (200, 206):
         raise RuntimeError(f"List applicants failed ({response.status_code}): {response.text[:300]}")
     rows = response.json()
     if not isinstance(rows, list):
         rows = []
 
-    party_map = _party_map([str(r["party_id"]) for r in rows])
-    return [
-        applicant_to_json(r, party=party_map.get(str(r["party_id"])))
+    total = len(rows)
+    if paginate:
+        content_range = response.headers.get("content-range") or "*/0"
+        try:
+            total = int(content_range.split("/")[-1])
+        except ValueError:
+            total = len(rows)
+
+    party_map: dict[str, dict[str, Any]] = {}
+    if include_party:
+        party_map = _party_map([str(r["party_id"]) for r in rows if r.get("party_id")])
+    applicants = [
+        applicant_to_json(
+            r, party=party_map.get(str(r["party_id"])) if include_party else None
+        )
         for r in rows
     ]
+    if paginate:
+        total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+    else:
+        page_size = max(len(applicants), 1)
+        total_pages = 1
+
+    return {
+        "applicants": applicants,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
 
 
 def get_applicant(applicant_id: str) -> dict[str, Any]:
-    response = httpx.get(
+    response = _http().get(
         f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "id": f"eq.{applicant_id}", "limit": "1"},
@@ -330,7 +402,7 @@ def create_applicant(payload: ApplicantCreate) -> dict[str, Any]:
         "is_archived": False,
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _http().post(
         f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -374,7 +446,7 @@ def update_applicant(applicant_id: str, payload: ApplicantUpdate) -> dict[str, A
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
-    response = httpx.patch(
+    response = _http().patch(
         f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -395,19 +467,19 @@ def archive_applicant(applicant_id: str) -> dict[str, Any]:
 
 
 def count_links_for_applicant(applicant_id: str) -> int:
-    pos = httpx.get(
+    pos = _http().get(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers={**_service_headers(), "Prefer": "count=exact"},
         params={"select": "id", "applicant_id": f"eq.{applicant_id}", "limit": "1"},
         timeout=HTTP_TIMEOUT,
     )
-    alloc = httpx.get(
+    alloc = _http().get(
         f"{_supabase_url()}/rest/v1/ipo_position_allocations",
         headers={**_service_headers(), "Prefer": "count=exact"},
         params={"select": "position_id", "applicant_id": f"eq.{applicant_id}", "limit": "1"},
         timeout=HTTP_TIMEOUT,
     )
-    sell = httpx.get(
+    sell = _http().get(
         f"{_supabase_url()}/rest/v1/{SELL_APPLICANTS_TABLE}",
         headers={**_service_headers(), "Prefer": "count=exact"},
         params={"select": "sell_id", "applicant_id": f"eq.{applicant_id}", "limit": "1"},
@@ -426,7 +498,7 @@ def count_links_for_applicant(applicant_id: str) -> int:
 
 
 def _hard_delete_applicant(applicant_id: str) -> None:
-    response = httpx.delete(
+    response = _http().delete(
         f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"id": f"eq.{applicant_id}"},
@@ -454,7 +526,7 @@ def _party_map(party_ids: list[str]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for i in range(0, len(unique), 50):
         chunk = unique[i : i + 50]
-        response = httpx.get(
+        response = _http().get(
             f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
             headers=_service_headers(),
             params={"select": "*", "id": f"in.({','.join(chunk)})"},
@@ -502,7 +574,7 @@ def import_clients_from_excel(file_bytes: bytes) -> dict[str, Any]:
             key = name.upper()
             if key in party_by_key:
                 continue
-            response = httpx.post(
+            response = _http().post(
                 f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
                 headers=_service_headers(
                     {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -545,7 +617,7 @@ def import_clients_from_excel(file_bytes: bytes) -> dict[str, Any]:
     )
 
     # Index existing applicants by party for fast match
-    all_applicants = list_applicants(include_archived=True)
+    all_applicants = list_applicants(include_archived=True)["applicants"]
     apps_by_party: dict[str, list[dict[str, Any]]] = {}
     for app in all_applicants:
         apps_by_party.setdefault(str(app["party_id"]), []).append(app)
@@ -619,7 +691,7 @@ def import_clients_from_excel(file_bytes: bytes) -> dict[str, Any]:
 
     for i in range(0, len(to_insert), 100):
         chunk = to_insert[i : i + 100]
-        response = httpx.post(
+        response = _http().post(
             f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
             headers=_service_headers(
                 {"Content-Type": "application/json", "Prefer": "return=minimal"}
@@ -633,7 +705,7 @@ def import_clients_from_excel(file_bytes: bytes) -> dict[str, Any]:
             )
 
     for applicant_id, patch in to_update:
-        response = httpx.patch(
+        response = _http().patch(
             f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
             headers=_service_headers(
                 {"Content-Type": "application/json", "Prefer": "return=minimal"}
@@ -681,5 +753,5 @@ def _match_applicant_in_list(
 def _find_existing_applicant(
     party_id: str, *, name: str, pan: str, dpid: str
 ) -> dict[str, Any] | None:
-    existing = list_applicants(party_id=party_id, include_archived=True)
+    existing = list_applicants(party_id=party_id, include_archived=True)["applicants"]
     return _match_applicant_in_list(existing, name=name, pan=pan, dpid=dpid)
