@@ -69,7 +69,7 @@ def list_parties(
     return [party_to_json(r, applicant_count=counts.get(str(r["id"]), 0)) for r in rows]
 
 
-def get_party(party_id: str) -> dict[str, Any]:
+def get_party(party_id: str, *, include_applicant_count: bool = True) -> dict[str, Any]:
     response = httpx.get(
         f"{_supabase_url()}/rest/v1/{PARTIES_TABLE}",
         headers=_service_headers(),
@@ -81,8 +81,11 @@ def get_party(party_id: str) -> dict[str, Any]:
     data = response.json()
     if not (isinstance(data, list) and data):
         raise LookupError("Party not found.")
-    counts = _applicant_counts([party_id])
-    return party_to_json(data[0], applicant_count=counts.get(party_id, 0))
+    count = None
+    if include_applicant_count:
+        counts = _applicant_counts([party_id])
+        count = counts.get(party_id, 0)
+    return party_to_json(data[0], applicant_count=count)
 
 
 def find_party_by_name(name: str) -> dict[str, Any] | None:

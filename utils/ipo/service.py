@@ -17,6 +17,7 @@ from utils.ipo.models import (
     SellCreate,
     SellUpdate,
     applicant_to_json,
+    compute_position_status,
     master_to_json,
     position_to_json,
     sell_to_json,
@@ -123,7 +124,7 @@ def list_ipos(
     return [master_to_json(row, trade_count=count_positions_for_ipo(str(row["id"]))) for row in rows]
 
 
-def get_ipo(ipo_id: str) -> dict[str, Any]:
+def get_ipo(ipo_id: str, *, include_trade_count: bool = True) -> dict[str, Any]:
     response = httpx.get(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers(),
@@ -135,7 +136,8 @@ def get_ipo(ipo_id: str) -> dict[str, Any]:
     data = response.json()
     if isinstance(data, list) and data:
         row = data[0]
-        return master_to_json(row, trade_count=count_positions_for_ipo(str(row["id"])))
+        trade_count = count_positions_for_ipo(str(row["id"])) if include_trade_count else None
+        return master_to_json(row, trade_count=trade_count)
     raise LookupError("IPO not found.")
 
 
@@ -426,13 +428,13 @@ def get_position(broker_id: str, position_id: str) -> dict[str, Any]:
 
 
 def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
-    ipo = get_ipo(payload.ipo_id)
+    ipo = get_ipo(payload.ipo_id, include_trade_count=False)
     if ipo.get("is_archived"):
         raise ValueError("Cannot trade against an archived IPO.")
     if ipo.get("status") != "Active":
         raise ValueError("Select an Active IPO. This IPO is not currently Active.")
 
-    party = get_party(payload.party_id)
+    party = get_party(payload.party_id, include_applicant_count=False)
     if party.get("is_archived") or party.get("status") != "Active":
         raise ValueError("Selected party is not Active.")
     party_name = party.get("name") or ""
@@ -468,7 +470,57 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         raise RuntimeError(f"Create position failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     created = data[0] if isinstance(data, list) and data else data
-    return get_position(broker_id, str(created["id"]))
+    position_id = str(created["id"])
+    position = position_to_json(created, sold_app=0.0, sells=[], ipo=ipo, allocations=[])
+
+    if not payload.include_sell:
+        return position
+
+    # Optional same-form sell — no extra get_position round-trip
+    sell_app = float(payload.sell_app)  # type: ignore[arg-type]
+    sell_rate = float(payload.sell_rate)  # type: ignore[arg-type]
+    if sell_app > float(position["buy_app"]) + 1e-9:
+        raise ValueError(
+            f"SELL APP ({sell_app}) cannot exceed BUY APP ({position['buy_app']})."
+        )
+    sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(
+        MONEY_QUANT, rounding=ROUND_HALF_UP
+    )
+    sell_row = {
+        "broker_id": broker_id,
+        "position_id": position_id,
+        "sell_date": payload.sell_date or payload.trade_date,
+        "sell_app": float(_money(sell_app)),
+        "sell_rate": float(_money(sell_rate)),
+        "sell_amt": float(sell_amt),
+        "sell_party": str(payload.sell_party or "").strip(),
+        "dalal": None if payload.sell_dalal is None else float(_money(payload.sell_dalal)),
+        "notes": "",
+        "updated_at": _now(),
+    }
+    sell_response = httpx.post(
+        f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
+        headers=_service_headers(
+            {"Content-Type": "application/json", "Prefer": "return=representation"}
+        ),
+        json=sell_row,
+        timeout=HTTP_TIMEOUT,
+    )
+    if sell_response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Create sell failed ({sell_response.status_code}): {sell_response.text[:300]}"
+        )
+    sell_data = sell_response.json()
+    sell_created = sell_data[0] if isinstance(sell_data, list) and sell_data else sell_data
+    sell = sell_to_json(sell_created)
+    buy_app = float(position["buy_app"])
+    return {
+        **position,
+        "sells": [sell],
+        "sold_app": sell_app,
+        "remaining_app": max(buy_app - sell_app, 0.0),
+        "status": compute_position_status(buy_app, sell_app),
+    }
 
 
 def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -> dict[str, Any]:
@@ -476,22 +528,24 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
     buy_app = payload.buy_app if payload.buy_app is not None else existing["buy_app"]
     if buy_app + 1e-9 < existing["sold_app"]:
         raise ValueError(
-            f"BUY APP cannot be less than already sold quantity ({existing['sold_app']})."
+            f"BUY APP cannot be less than already sold quantity ({existing['sold_app']}). "
+            "Remove or reduce sells first."
         )
-    allocated = existing.get("allocated_count") or 0
-    if allocated > 0 and abs(buy_app - existing["buy_app"]) > 1e-9:
-        required = int(round(buy_app))
-        if abs(buy_app - required) > 1e-9 or allocated != required:
-            raise ValueError(
-                f"This position has {allocated} allocated applicant(s). "
-                f"Clear or re-allocate applicants before changing BUY APP to {buy_app}."
-            )
+    allocated = int(existing.get("allocated_count") or 0)
+    if allocated > 0 and buy_app + 1e-9 < allocated:
+        raise ValueError(
+            f"BUY APP cannot be less than allocated applicants ({allocated}). "
+            "Clear or re-allocate applicants first."
+        )
 
     ipo_id = payload.ipo_id or existing["ipo_id"]
-    if payload.ipo_id:
-        ipo = get_ipo(payload.ipo_id)
+    ipo = existing.get("ipo")
+    if payload.ipo_id and payload.ipo_id != existing["ipo_id"]:
+        ipo = get_ipo(payload.ipo_id, include_trade_count=False)
         if ipo.get("is_archived"):
             raise ValueError("Cannot move trade to an archived IPO.")
+        if ipo.get("status") != "Active":
+            raise ValueError("Select an Active IPO when changing the IPO.")
 
     buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
     buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -501,16 +555,22 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
 
     party_id = existing.get("party_id")
     party_name = existing["party"]
-    if payload.party_id is not None:
-        party = get_party(payload.party_id)
+    if payload.party_id is not None and payload.party_id != existing.get("party_id"):
+        party = get_party(payload.party_id, include_applicant_count=False)
         if party.get("is_archived") or party.get("status") != "Active":
             raise ValueError("Selected party is not Active.")
-        if existing.get("allocated_count") and payload.party_id != existing.get("party_id"):
+        if allocated > 0:
             raise ValueError(
                 "Clear applicant allocation before changing the buy party."
             )
         party_id = payload.party_id
         party_name = party.get("name") or party_name
+    elif payload.party_id is not None:
+        party_id = payload.party_id
+        # Keep existing party name unless we need a refresh
+        if not party_name:
+            party = get_party(payload.party_id, include_applicant_count=False)
+            party_name = party.get("name") or party_name
 
     patch = {
         "ipo_id": ipo_id,
@@ -535,6 +595,16 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Update position failed ({response.status_code}): {response.text[:300]}")
+    data = response.json()
+    if isinstance(data, list) and data:
+        row = data[0]
+        return position_to_json(
+            row,
+            sold_app=existing["sold_app"],
+            sells=existing.get("sells") or [],
+            ipo=ipo if isinstance(ipo, dict) else existing.get("ipo"),
+            allocations=existing.get("allocations") or [],
+        )
     return get_position(broker_id, position_id)
 
 
@@ -584,7 +654,18 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         raise RuntimeError(f"Create sell failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     created = data[0] if isinstance(data, list) and data else data
-    return {"sell": sell_to_json(created), "position": get_position(broker_id, position_id)}
+    sell = sell_to_json(created)
+    sells = list(position.get("sells") or []) + [sell]
+    sold_app = sum(float(s["sell_app"]) for s in sells)
+    buy_app = float(position["buy_app"])
+    position_out = {
+        **position,
+        "sells": sells,
+        "sold_app": sold_app,
+        "remaining_app": max(buy_app - sold_app, 0.0),
+        "status": compute_position_status(buy_app, sold_app),
+    }
+    return {"sell": sell, "position": position_out}
 
 
 def update_sell(

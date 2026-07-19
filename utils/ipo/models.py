@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _strip(value: str) -> str:
@@ -135,7 +135,7 @@ class ApplicantUpdate(BaseModel):
 
 
 class PositionCreate(BaseModel):
-    """Buy stage — party + quantity only. Applicants allocated later."""
+    """Buy stage — party + quantity. Optional sell can be recorded in the same request."""
 
     ipo_id: str = Field(min_length=1)
     trade_date: str = Field(min_length=10, max_length=10)
@@ -143,11 +143,50 @@ class PositionCreate(BaseModel):
     category: str = Field(min_length=1, max_length=100)
     buy_app: float = Field(gt=0)
     buy_rate: float = Field(ge=0)
+    # Optional immediate sell (Workflow 1)
+    include_sell: bool = False
+    sell_date: str | None = Field(default=None, min_length=10, max_length=10)
+    sell_party: str | None = Field(default=None, max_length=200)
+    sell_app: float | None = Field(default=None, gt=0)
+    sell_rate: float | None = Field(default=None, ge=0)
+    sell_dalal: float | None = None
 
     @field_validator("category")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return _strip(value)
+
+    @field_validator("sell_party")
+    @classmethod
+    def strip_sell_party(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _strip(value)
+
+    @model_validator(mode="after")
+    def validate_optional_sell(self) -> PositionCreate:
+        if not self.include_sell:
+            return self
+        missing: list[str] = []
+        if not (self.sell_party or "").strip():
+            missing.append("Sell Party")
+        if self.sell_app is None:
+            missing.append("Sell Applications")
+        if self.sell_rate is None:
+            missing.append("Sell Rate")
+        if missing:
+            raise ValueError(
+                "Sell details incomplete. Provide "
+                + ", ".join(missing)
+                + ", or turn off Add Sell Details."
+            )
+        if not self.sell_date:
+            self.sell_date = self.trade_date
+        if float(self.sell_app or 0) > float(self.buy_app) + 1e-9:
+            raise ValueError(
+                f"SELL APP ({self.sell_app}) cannot exceed BUY APP ({self.buy_app})."
+            )
+        return self
 
 
 class PositionUpdate(BaseModel):

@@ -1450,6 +1450,8 @@ async def ipo_get_positions(
 async def ipo_create_position(broker: BrokerAuth, payload: PositionCreate) -> JSONResponse:
     try:
         validate_trade_date_iso(payload.trade_date)
+        if payload.include_sell and payload.sell_date:
+            validate_trade_date_iso(payload.sell_date)
         item = await asyncio.to_thread(create_position, broker.id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

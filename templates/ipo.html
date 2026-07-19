@@ -67,12 +67,13 @@
 
 <!-- Buy modal -->
 <div id="buyModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-  <div class="w-full max-w-lg rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl">
-    <h3 class="text-xl font-semibold mb-4">Record buy</h3>
-    <p class="text-sm text-slate-500 mb-3">Select Party and BUY APP only. Applicants are allocated later.</p>
+  <div class="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl">
+    <h3 id="buyModalTitle" class="text-xl font-semibold mb-4">Record buy</h3>
+    <p id="buyModalHint" class="text-sm text-slate-500 mb-3">Select Party and BUY APP. Optionally add sell details in the same form.</p>
     <form id="buyForm" class="space-y-3">
+      <input type="hidden" id="buyEditId" />
       <div>
-        <label class="block text-sm font-medium mb-1" for="buyIpo">Active IPO</label>
+        <label class="block text-sm font-medium mb-1" for="buyIpo">IPO</label>
         <select id="buyIpo" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
       </div>
       <div>
@@ -98,10 +99,40 @@
         </div>
       </div>
       <p class="text-sm text-slate-600">BUY AMT: <span id="buyAmtPreview" class="font-semibold">0</span></p>
+
+      <div id="buySellSectionWrap" class="border-t border-slate-200 pt-3">
+        <button type="button" id="buySellToggle" class="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100">
+          <span id="buySellToggleLabel">Add Sell Details</span>
+          <span id="buySellToggleIcon" class="text-slate-500">+</span>
+        </button>
+        <div id="buySellFields" class="hidden mt-3 space-y-3">
+          <p class="text-xs text-slate-500">Optional — fill if you already know the sell. Otherwise save the buy and add sell later via Open / Sell.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium mb-1" for="buySellDate">SELL DATE</label>
+              <input type="date" id="buySellDate" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="buySellParty">SELL PARTY</label>
+              <input type="text" id="buySellParty" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="buySellApp">SELL APP</label>
+              <input type="number" id="buySellApp" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="buySellRate">SELL RATE</label>
+              <input type="number" id="buySellRate" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2" />
+            </div>
+          </div>
+          <p class="text-sm text-slate-600">SELL AMT: <span id="buySellAmtPreview" class="font-semibold">0</span></p>
+        </div>
+      </div>
+
       <p id="buyError" class="hidden text-sm text-red-600"></p>
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" id="buyCancel" class="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-        <button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save buy</button>
+        <button type="submit" id="buySubmit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save buy</button>
       </div>
     </form>
   </div>
@@ -177,8 +208,11 @@
       </div>
       <button type="button" id="allocClose" class="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">✕</button>
     </div>
-    <p class="text-sm text-slate-600 mb-3">Select applicants from the <strong>buy party</strong>. Count must equal BUY APP to mark Fully Allocated.</p>
-    <p id="allocCountHint" class="text-sm font-medium mb-2"></p>
+    <p class="text-sm text-slate-600 mb-2">Select applicants from the <strong>buy party</strong>. Count must equal BUY APP to mark Fully Allocated.</p>
+    <div class="flex items-center justify-between gap-2 mb-2">
+      <p id="allocCountHint" class="text-sm font-medium"></p>
+      <button type="button" id="allocSelectAll" class="rounded border px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Select all</button>
+    </div>
     <div id="allocApplicantsBox" class="max-h-64 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 text-sm bg-slate-50 mb-3"></div>
     <p id="allocError" class="hidden text-sm text-red-600 mb-2"></p>
     <div class="flex justify-between gap-2">
@@ -251,23 +285,49 @@
     return applicantsByParty[partyId];
   }
 
+  let allIpos = [];
+
   async function loadActiveIpos() {
     const response = await TradeSlip.apiFetch("/api/ipo/master?active_only=true");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
     activeIpos = payload.ipos || [];
-    const buySelect = document.getElementById("buyIpo");
-    buySelect.innerHTML = activeIpos.length
-      ? activeIpos.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("")
-      : '<option value="">No Active IPOs — add one in IPO Master</option>';
+    fillBuyIpoSelect(null);
     const allRes = await TradeSlip.apiFetch("/api/ipo/master");
     const allPayload = await allRes.json().catch(() => ({}));
     if (allRes.ok) {
-      const all = allPayload.ipos || [];
+      allIpos = allPayload.ipos || [];
       filterIpo.innerHTML =
         '<option value="">All IPOs</option>' +
-        all.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("");
+        allIpos.map((i) => `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(i.display_name || i.name)}</option>`).join("");
     }
+  }
+
+  function fillBuyIpoSelect(currentIpoId) {
+    const buySelect = document.getElementById("buyIpo");
+    const editing = Boolean(document.getElementById("buyEditId").value);
+    let options = activeIpos.slice();
+    if (editing && currentIpoId) {
+      const current = allIpos.find((i) => i.id === currentIpoId) || activeIpos.find((i) => i.id === currentIpoId);
+      if (current && !options.some((i) => i.id === currentIpoId)) {
+        options = [current, ...options];
+      }
+    }
+    buySelect.innerHTML = options.length
+      ? options.map((i) => {
+          const label = i.display_name || i.name;
+          const suffix = i.status && i.status !== "Active" ? ` (${i.status})` : "";
+          return `<option value="${TradeSlip.escapeHtml(i.id)}">${TradeSlip.escapeHtml(label + suffix)}</option>`;
+        }).join("")
+      : '<option value="">No Active IPOs — add one in IPO Master</option>';
+    if (currentIpoId) buySelect.value = currentIpoId;
+  }
+
+  function upsertPositionLocal(item) {
+    const idx = positions.findIndex((p) => p.id === item.id);
+    if (idx >= 0) positions[idx] = item;
+    else positions.unshift(item);
+    renderPositions();
   }
 
   async function loadLabels() {
@@ -300,6 +360,7 @@
           <td class="px-3 py-2">${statusBadge(p.allocation_status || "Unallocated")}<div class="text-xs text-slate-500 mt-0.5">${p.allocated_count || 0}/${Math.round(p.buy_app)}</div></td>
           <td class="px-3 py-2 text-right space-x-1 whitespace-nowrap">
             <button type="button" class="open-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Open / Sell</button>
+            <button type="button" class="edit-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</button>
             <button type="button" class="alloc-pos rounded border border-emerald-200 text-emerald-800 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Allocate</button>
             <button type="button" class="del-pos rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>
           </td>
@@ -309,6 +370,9 @@
 
     posBody.querySelectorAll(".open-pos").forEach((btn) => {
       btn.addEventListener("click", () => openDetail(btn.dataset.id));
+    });
+    posBody.querySelectorAll(".edit-pos").forEach((btn) => {
+      btn.addEventListener("click", () => openEditBuy(btn.dataset.id));
     });
     posBody.querySelectorAll(".alloc-pos").forEach((btn) => {
       btn.addEventListener("click", () => openAllocModal(btn.dataset.id));
@@ -350,14 +414,100 @@
     }
   }
 
+  let buySellOpen = false;
+
+  function setBuySellOpen(open) {
+    buySellOpen = open;
+    const fields = document.getElementById("buySellFields");
+    const label = document.getElementById("buySellToggleLabel");
+    const icon = document.getElementById("buySellToggleIcon");
+    if (open) {
+      fields.classList.remove("hidden");
+      label.textContent = "Hide Sell Details";
+      icon.textContent = "−";
+      if (!document.getElementById("buySellDate").value) {
+        document.getElementById("buySellDate").value = document.getElementById("buyDate").value;
+      }
+    } else {
+      fields.classList.add("hidden");
+      label.textContent = "Add Sell Details";
+      icon.textContent = "+";
+    }
+  }
+
+  function clearBuySellFields() {
+    document.getElementById("buySellDate").value = "";
+    document.getElementById("buySellParty").value = "";
+    document.getElementById("buySellApp").value = "";
+    document.getElementById("buySellRate").value = "";
+    document.getElementById("buySellAmtPreview").textContent = "0";
+  }
+
+  function recalcBuySellAmt() {
+    const a = Number(document.getElementById("buySellApp").value || 0);
+    const r = Number(document.getElementById("buySellRate").value || 0);
+    document.getElementById("buySellAmtPreview").textContent = fmt(a * r);
+  }
+
+  document.getElementById("buySellToggle").addEventListener("click", () => {
+    setBuySellOpen(!buySellOpen);
+  });
+  document.getElementById("buySellApp").addEventListener("input", recalcBuySellAmt);
+  document.getElementById("buySellRate").addEventListener("input", recalcBuySellAmt);
+  document.getElementById("buyDate").addEventListener("change", () => {
+    if (buySellOpen) {
+      document.getElementById("buySellDate").value = document.getElementById("buyDate").value;
+    }
+  });
+
   function openBuyModal() {
     document.getElementById("buyError").classList.add("hidden");
+    document.getElementById("buyEditId").value = "";
+    document.getElementById("buyModalTitle").textContent = "Record buy";
+    document.getElementById("buyModalHint").textContent =
+      "Select Party and BUY APP. Optionally add sell details in the same form.";
+    document.getElementById("buySubmit").textContent = "Save buy";
+    document.getElementById("buySellSectionWrap").classList.remove("hidden");
+    fillBuyIpoSelect(null);
     document.getElementById("buyDate").value = TradeSlip.todayIso();
     document.getElementById("buyParty").value = "";
     document.getElementById("buyCategory").value = "";
     document.getElementById("buyApp").value = "";
     document.getElementById("buyRate").value = "";
     document.getElementById("buyAmtPreview").textContent = "0";
+    clearBuySellFields();
+    setBuySellOpen(false);
+    document.getElementById("buyModal").classList.remove("hidden");
+  }
+
+  async function openEditBuy(id) {
+    const local = positions.find((p) => p.id === id);
+    let payload = local;
+    if (!payload) {
+      const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(id)}`);
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setMsg(posStatus, TradeSlip.parseErrorDetail(payload), "error");
+        return;
+      }
+    }
+    document.getElementById("buyError").classList.add("hidden");
+    document.getElementById("buyEditId").value = payload.id;
+    document.getElementById("buyModalTitle").textContent = "Edit buy";
+    document.getElementById("buyModalHint").textContent =
+      "Update buy details. BUY AMT recalculates automatically. Cannot reduce BUY APP below sold or allocated quantity.";
+    document.getElementById("buySubmit").textContent = "Save changes";
+    // Sell-on-create is create-only; use Open / Sell for sells
+    document.getElementById("buySellSectionWrap").classList.add("hidden");
+    clearBuySellFields();
+    setBuySellOpen(false);
+    fillBuyIpoSelect(payload.ipo_id);
+    document.getElementById("buyDate").value = (payload.trade_date || "").slice(0, 10);
+    document.getElementById("buyParty").value = payload.party_id || "";
+    document.getElementById("buyCategory").value = payload.category || "";
+    document.getElementById("buyApp").value = payload.buy_app ?? "";
+    document.getElementById("buyRate").value = payload.buy_rate ?? "";
+    recalcBuy();
     document.getElementById("buyModal").classList.remove("hidden");
   }
 
@@ -387,30 +537,58 @@
       err.classList.remove("hidden");
       return;
     }
-    TradeSlip.showProgress("Saving buy…", "Creating open position.");
+    const editId = document.getElementById("buyEditId").value;
+    const body = {
+      ipo_id: document.getElementById("buyIpo").value,
+      trade_date: document.getElementById("buyDate").value,
+      party_id: document.getElementById("buyParty").value,
+      category: document.getElementById("buyCategory").value.trim(),
+      buy_app: Number(document.getElementById("buyApp").value),
+      buy_rate: Number(document.getElementById("buyRate").value),
+    };
+    if (!editId && buySellOpen) {
+      const sellParty = document.getElementById("buySellParty").value.trim();
+      const sellAppRaw = document.getElementById("buySellApp").value;
+      const sellRateRaw = document.getElementById("buySellRate").value;
+      const sellDate = document.getElementById("buySellDate").value || body.trade_date;
+      if (!sellParty || sellAppRaw === "" || sellRateRaw === "") {
+        err.textContent = "Fill Sell Party, Sell App, and Sell Rate, or hide Sell Details.";
+        err.classList.remove("hidden");
+        return;
+      }
+      body.include_sell = true;
+      body.sell_date = sellDate;
+      body.sell_party = sellParty;
+      body.sell_app = Number(sellAppRaw);
+      body.sell_rate = Number(sellRateRaw);
+    }
+    const submitBtn = document.getElementById("buySubmit");
+    submitBtn.disabled = true;
     try {
-      const response = await TradeSlip.apiFetch("/api/ipo/positions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ipo_id: document.getElementById("buyIpo").value,
-          trade_date: document.getElementById("buyDate").value,
-          party_id: document.getElementById("buyParty").value,
-          category: document.getElementById("buyCategory").value.trim(),
-          buy_app: Number(document.getElementById("buyApp").value),
-          buy_rate: Number(document.getElementById("buyRate").value),
-        }),
-      });
+      const response = await TradeSlip.apiFetch(
+        editId ? `/api/ipo/positions/${encodeURIComponent(editId)}` : "/api/ipo/positions",
+        {
+          method: editId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       closeBuyModal();
-      await loadPositions();
-      setMsg(posStatus, "Buy recorded (Open · Unallocated).", "success");
+      upsertPositionLocal(payload);
+      if (currentDetail && currentDetail.id === payload.id) currentDetail = { ...currentDetail, ...payload };
+      const msg = editId
+        ? "Buy updated."
+        : body.include_sell
+          ? "Buy + sell recorded."
+          : "Buy recorded.";
+      setMsg(posStatus, msg, "success");
     } catch (error) {
       err.textContent = error.message;
       err.classList.remove("hidden");
     } finally {
-      TradeSlip.hideProgress();
+      submitBtn.disabled = false;
     }
   });
 
@@ -423,11 +601,11 @@
   }
 
   async function openDetail(id) {
-    TradeSlip.showProgress("Loading…", "Fetching position and sells.");
     try {
       const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(id)}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      upsertPositionLocal(payload);
       currentDetail = payload;
       const ipoName = (payload.ipo && (payload.ipo.display_name || payload.ipo.name)) || "";
       document.getElementById("detailTitle").textContent = `${payload.party} · ${ipoName}`;
@@ -451,7 +629,8 @@
             .join("")
         : '<p class="text-slate-500">No sells yet — this position is Open.</p>';
       document.getElementById("sellPositionId").value = payload.id;
-      document.getElementById("sellDate").value = TradeSlip.todayIso();
+      // Default sell date to buy date (same-day trades); user can change
+      document.getElementById("sellDate").value = (payload.trade_date || TradeSlip.todayIso()).slice(0, 10);
       document.getElementById("sellParty").value = "";
       document.getElementById("sellApp").value = "";
       document.getElementById("sellRate").value = "";
@@ -464,7 +643,7 @@
       document.querySelectorAll(".del-sell").forEach((btn) => {
         btn.addEventListener("click", async () => {
           if (!confirm("Remove this sell transaction?")) return;
-          TradeSlip.showProgress("Removing…", "Updating remaining quantity.");
+          btn.disabled = true;
           try {
             const response = await TradeSlip.apiFetch(
               `/api/ipo/positions/${encodeURIComponent(payload.id)}/sells/${encodeURIComponent(btn.dataset.id)}`,
@@ -472,38 +651,56 @@
             );
             const body = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(body));
+            if (body.position && body.position.id) upsertPositionLocal(body.position);
             await openDetail(payload.id);
-            await loadPositions();
           } catch (e) {
             alert(e.message);
           } finally {
-            TradeSlip.hideProgress();
+            btn.disabled = false;
           }
         });
       });
     } catch (e) {
       setMsg(posStatus, e.message, "error");
-    } finally {
-      TradeSlip.hideProgress();
     }
   }
 
   function updateAllocCountHint(required) {
+    const boxes = document.querySelectorAll(".alloc-app-cb");
     const n = document.querySelectorAll(".alloc-app-cb:checked").length;
     const el = document.getElementById("allocCountHint");
     el.textContent = `Selected ${n} of ${required} required`;
-    el.className = "text-sm font-medium mb-2 " + (n === required ? "text-emerald-700" : "text-amber-700");
+    el.className = "text-sm font-medium " + (n === required ? "text-emerald-700" : "text-amber-700");
+    const toggle = document.getElementById("allocSelectAll");
+    if (!boxes.length) {
+      toggle.textContent = "Select all";
+      toggle.disabled = true;
+      return;
+    }
+    toggle.disabled = false;
+    toggle.textContent = n === boxes.length ? "Deselect all" : "Select all";
   }
 
+  document.getElementById("allocSelectAll").addEventListener("click", () => {
+    const boxes = Array.from(document.querySelectorAll(".alloc-app-cb"));
+    if (!boxes.length) return;
+    const required = Number(document.getElementById("allocSave").dataset.required || 0);
+    const allOn = boxes.every((cb) => cb.checked);
+    boxes.forEach((cb) => {
+      cb.checked = !allOn;
+    });
+    updateAllocCountHint(required);
+  });
+
   async function openAllocModal(positionId) {
-    TradeSlip.showProgress("Loading…", "Loading applicants for buy party.");
     try {
       let payload = currentDetail && currentDetail.id === positionId ? currentDetail : null;
-      if (!payload) {
+      if (!payload || !payload.allocations) {
         const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(positionId)}`);
         payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
         currentDetail = payload;
+        upsertPositionLocal(payload);
       }
       if (!payload.party_id) {
         alert("This position has no Client Master party linked.");
@@ -539,8 +736,6 @@
       document.getElementById("allocModal").classList.remove("hidden");
     } catch (e) {
       setMsg(posStatus, e.message, "error");
-    } finally {
-      TradeSlip.hideProgress();
     }
   }
 
@@ -555,7 +750,8 @@
       err.classList.remove("hidden");
       return;
     }
-    TradeSlip.showProgress("Saving…", "Allocating applicants.");
+    const saveBtn = document.getElementById("allocSave");
+    saveBtn.disabled = true;
     try {
       const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(positionId)}/allocations`, {
         method: "PUT",
@@ -565,24 +761,23 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       currentDetail = payload;
+      upsertPositionLocal(payload);
       document.getElementById("allocModal").classList.add("hidden");
       if (!document.getElementById("detailModal").classList.contains("hidden")) {
         fillAllocSummary(payload);
       }
-      await loadPositions();
       setMsg(posStatus, "Fully allocated.", "success");
     } catch (e) {
       err.textContent = e.message;
       err.classList.remove("hidden");
     } finally {
-      TradeSlip.hideProgress();
+      saveBtn.disabled = false;
     }
   });
 
   document.getElementById("allocClearBtn").addEventListener("click", async () => {
     if (!confirm("Clear all allocated applicants for this position?")) return;
     const positionId = document.getElementById("allocClearBtn").dataset.positionId;
-    TradeSlip.showProgress("Clearing…", "Removing allocation.");
     try {
       const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(positionId)}/allocations`, {
         method: "DELETE",
@@ -590,15 +785,13 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       currentDetail = payload;
+      upsertPositionLocal(payload);
       document.getElementById("allocModal").classList.add("hidden");
       if (!document.getElementById("detailModal").classList.contains("hidden")) {
         fillAllocSummary(payload);
       }
-      await loadPositions();
     } catch (e) {
       alert(e.message);
-    } finally {
-      TradeSlip.hideProgress();
     }
   });
 
@@ -623,7 +816,8 @@
       sell_party: document.getElementById("sellParty").value.trim(),
     };
     if (dalalRaw !== "") body.dalal = Number(dalalRaw);
-    TradeSlip.showProgress("Saving sell…", "Updating position status.");
+    const sellBtn = document.getElementById("sellSubmit");
+    sellBtn.disabled = true;
     try {
       const response = await TradeSlip.apiFetch(`/api/ipo/positions/${encodeURIComponent(positionId)}/sells`, {
         method: "POST",
@@ -632,13 +826,15 @@
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      if (payload.position) {
+        upsertPositionLocal(payload.position);
+        currentDetail = payload.position;
+      }
       await openDetail(positionId);
-      await loadPositions();
     } catch (error) {
       err.textContent = error.message;
       err.classList.remove("hidden");
-    } finally {
-      TradeSlip.hideProgress();
+      sellBtn.disabled = false;
     }
   });
 
