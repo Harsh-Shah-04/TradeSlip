@@ -311,6 +311,8 @@ def update_allotment(allotment_id: str, payload: AllotmentUpdate) -> dict[str, A
         "shares_allotted": shares,
         "updated_at": _now(),
     }
+    if status == "Not Allotted":
+        patch["listing_price_override"] = None
     if payload.listing_price_override is not None:
         patch["listing_price_override"] = payload.listing_price_override
     if payload.clear_listing_price_override:
@@ -378,6 +380,81 @@ def _effective_price(row: dict[str, Any], listing_price: float | None) -> float 
     if listing_price is not None:
         return float(listing_price)
     return None
+
+
+def sync_sold_prices_from_listing(ipo_id: str, listing_price: float | None) -> int:
+    """Re-apply common listing price onto sold allotment rows for Settlement.
+
+    Settlement reads frozen ``sold_price``. After Save common price we must rewrite
+    sold_price for every sold Allotted row:
+      - no row override → use common listing_price
+      - has row override → keep override as sold_price
+    """
+    rows = list_allotments_raw(ipo_id)
+    updated = 0
+    for row in rows:
+        if not row.get("is_sold"):
+            continue
+        if (row.get("status") or "") != "Allotted":
+            continue
+        if int(row.get("shares_allotted") or 0) <= 0:
+            continue
+        price = _effective_price(row, listing_price)
+        if price is None:
+            continue
+        current = row.get("sold_price")
+        if current is not None and abs(float(current) - float(price)) < 1e-9:
+            continue
+        response = _http().patch(
+            f"{_supabase_url()}/rest/v1/{ALLOTMENTS_TABLE}",
+            headers=_service_headers(
+                {"Content-Type": "application/json", "Prefer": "return=minimal"}
+            ),
+            params={"id": f"eq.{row['id']}"},
+            json={
+                "sold_price": float(_money(price)),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
+        if response.status_code not in (200, 204):
+            raise RuntimeError(
+                f"Sync sold price failed ({response.status_code}): {response.text[:300]}"
+            )
+        updated += 1
+    return updated
+
+
+def set_common_listing_price(
+    ipo_id: str, *, listing_price: float | None = None, clear: bool = False
+) -> dict[str, Any]:
+    """Save IPO common sold price and refresh sold_price on allotment rows."""
+    get_ipo(ipo_id, include_trade_count=False)  # ensure exists
+    if clear:
+        next_price: float | None = None
+    else:
+        if listing_price is None:
+            raise ValueError("listing_price is required unless clear=True.")
+        next_price = float(listing_price)
+
+    response = _http().patch(
+        f"{_supabase_url()}/rest/v1/ipo_master",
+        headers=_service_headers(
+            {"Content-Type": "application/json", "Prefer": "return=minimal"}
+        ),
+        params={"id": f"eq.{ipo_id}"},
+        json={"listing_price": next_price, "updated_at": _now()},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Save common listing price failed ({response.status_code}): {response.text[:300]}"
+        )
+
+    synced = sync_sold_prices_from_listing(ipo_id, next_price)
+    result = list_allotments(ipo_id)
+    result["sold_prices_synced"] = synced
+    return result
 
 
 def mark_sold(ipo_id: str, sell_date: str) -> dict[str, Any]:

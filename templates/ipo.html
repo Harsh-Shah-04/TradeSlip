@@ -35,15 +35,21 @@
       </select>
     </div>
     <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">Party</label>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">Buy party</label>
       <select id="filterParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
         <option value="">All parties</option>
       </select>
     </div>
-    <div class="md:col-span-2 xl:col-span-2">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSellParty">Sell party</label>
+      <select id="filterSellParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All sell parties</option>
+      </select>
+    </div>
+    <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSearch">Search</label>
       <div class="flex gap-2">
-        <input id="filterSearch" type="search" placeholder="Party, IPO, category, sub-cat, status…" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" autocomplete="off" />
+        <input id="filterSearch" type="search" placeholder="Party, sell party, IPO, category…" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" autocomplete="off" />
         <button type="button" id="clearFilters" class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Clear</button>
       </div>
     </div>
@@ -285,7 +291,14 @@
   const filterStatus = document.getElementById("filterStatus");
   const filterCategory = document.getElementById("filterCategory");
   const filterParty = document.getElementById("filterParty");
+  const filterSellParty = document.getElementById("filterSellParty");
   const filterSearch = document.getElementById("filterSearch");
+
+  function positionSellParties(p) {
+    return (p.sells || [])
+      .map((s) => (s.sell_party || "").trim())
+      .filter(Boolean);
+  }
 
   function setMsg(el, msg, tone) {
     el.textContent = msg || "";
@@ -424,6 +437,31 @@
     }
   }
 
+  function fillSellPartyFilterOptions() {
+    const selected = filterSellParty.value;
+    const names = new Set();
+    sellPartyOptions.forEach((p) => {
+      if (p.name) names.add(p.name);
+    });
+    allPositions.forEach((p) => {
+      positionSellParties(p).forEach((name) => names.add(name));
+    });
+    const sorted = Array.from(names).sort((a, b) => a.localeCompare(b));
+    filterSellParty.innerHTML =
+      '<option value="">All sell parties</option>' +
+      sorted
+        .map((name) => `<option value="${TradeSlip.escapeHtml(name)}">${TradeSlip.escapeHtml(name)}</option>`)
+        .join("");
+    if (selected && sorted.includes(selected)) filterSellParty.value = selected;
+    else if (selected) {
+      const opt = document.createElement("option");
+      opt.value = selected;
+      opt.textContent = selected;
+      filterSellParty.appendChild(opt);
+      filterSellParty.value = selected;
+    }
+  }
+
   function positionMatchesSearch(p, q) {
     if (!q) return true;
     const ipoName = (p.ipo && (p.ipo.display_name || p.ipo.name)) || "";
@@ -437,6 +475,7 @@
       p.trade_date,
       String(p.buy_app || ""),
       String(p.buy_rate || ""),
+      ...positionSellParties(p),
     ]
       .join(" ")
       .toLowerCase();
@@ -447,11 +486,16 @@
     const status = filterStatus.value;
     const category = filterCategory.value;
     const party = filterParty.value;
+    const sellParty = filterSellParty.value.trim().toLowerCase();
     const q = filterSearch.value.trim().toLowerCase();
     positions = allPositions.filter((p) => {
       if (status && p.status !== status) return false;
       if (category && (p.category || "") !== category) return false;
       if (party && (p.party || "") !== party) return false;
+      if (sellParty) {
+        const sells = positionSellParties(p).map((n) => n.toLowerCase());
+        if (!sells.some((n) => n === sellParty || n.includes(sellParty))) return false;
+      }
       if (!positionMatchesSearch(p, q)) return false;
       return true;
     });
@@ -463,6 +507,7 @@
     if (idx >= 0) allPositions[idx] = { ...allPositions[idx], ...item };
     else allPositions.unshift(item);
     fillPartyFilterOptions();
+    fillSellPartyFilterOptions();
     applyClientFilters();
   }
 
@@ -651,6 +696,7 @@
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       allPositions = payload.positions || [];
       fillPartyFilterOptions();
+      fillSellPartyFilterOptions();
       applyClientFilters();
       if (!silent) setMsg(posStatus, "", null);
     } catch (e) {
@@ -1156,6 +1202,7 @@
   filterStatus.addEventListener("change", () => applyClientFilters());
   filterCategory.addEventListener("change", () => applyClientFilters());
   filterParty.addEventListener("change", () => applyClientFilters());
+  filterSellParty.addEventListener("change", () => applyClientFilters());
   filterSearch.addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => applyClientFilters(), 200);
@@ -1165,12 +1212,14 @@
     filterStatus.value = "";
     filterCategory.value = "";
     filterParty.value = "";
+    filterSellParty.value = "";
     filterSearch.value = "";
     loadPositions();
   });
 
   Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster(), loadSellParties()]).then(() => {
     fillPartyFilterOptions();
+    fillSellPartyFilterOptions();
     return loadPositions();
   });
 </script>

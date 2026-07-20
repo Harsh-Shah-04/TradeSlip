@@ -6,7 +6,13 @@ import pytest
 
 from utils.ipo.allotments import _effective_price, _money, _pair_key
 from utils.ipo.models import AllotmentBulkUpdate, AllotmentUpdate, allotment_to_json
-from utils.ipo.settlement import _direction, _party_summary
+from utils.ipo.settlement import (
+    _allotment_line_totals,
+    _attribute_allotment_rows,
+    _direction,
+    _party_summary,
+    _sell_side_direction,
+)
 
 
 def test_pair_key():
@@ -87,3 +93,55 @@ def test_direction_and_party_summary():
 
 def test_money_quantize():
     assert float(_money(1.23456)) == 1.2346
+
+
+def test_attribute_allotment_rows_full_position():
+    rows = [
+        {"applicant_id": "b", "status": "Allotted", "shares_allotted": 26, "cost_per_app": 100},
+        {"applicant_id": "a", "status": "Not Allotted", "shares_allotted": 0, "cost_per_app": 100},
+    ]
+    out = _attribute_allotment_rows(3, 3, rows)
+    assert len(out) == 2
+    assert out[0]["applicant_id"] == "a"
+
+
+def test_attribute_allotment_rows_partial():
+    rows = [
+        {"applicant_id": "a", "status": "Allotted", "shares_allotted": 10, "cost_per_app": 50},
+        {"applicant_id": "b", "status": "Allotted", "shares_allotted": 20, "cost_per_app": 50},
+    ]
+    out = _attribute_allotment_rows(1, 2, rows)
+    assert len(out) == 1
+    assert out[0]["applicant_id"] == "a"
+
+
+def test_allotment_line_totals_listing_side():
+    rows = [
+        {
+            "status": "Allotted",
+            "shares_allotted": 26,
+            "cost_per_app": 100,
+            "is_sold": True,
+            "sold_price": 93,
+        },
+        {"status": "Not Allotted", "shares_allotted": 0, "cost_per_app": 100, "is_sold": False},
+    ]
+    totals = _allotment_line_totals(rows)
+    assert totals["allotted"] == 1
+    assert totals["shares_allotted"] == 26
+    assert totals["sell_amt"] == pytest.approx(2418)
+    assert totals["vyaj"] == pytest.approx(200)
+    assert totals["net_pl"] == pytest.approx(2218)
+
+
+def test_sell_side_direction_inverted():
+    assert _sell_side_direction(1536) == "Payable"
+    assert _sell_side_direction(-164) == "Receivable"
+    assert _sell_side_direction(0) == "Settled"
+    assert _direction(1536) == "Receivable"
+
+
+def test_effective_price_common_over_none_override():
+    assert _effective_price({"listing_price_override": None}, 92.0) == 92.0
+    assert _effective_price({"listing_price_override": ""}, 92.0) == 92.0
+    assert _effective_price({"listing_price_override": 91}, 92.0) == 91.0

@@ -44,6 +44,7 @@ from utils.ipo.models import (
     AllotmentUpdate,
     ApplicantCreate,
     ApplicantUpdate,
+    CommonListingPriceRequest,
     IpoMasterCreate,
     IpoMasterUpdate,
     LedgerPaymentRequest,
@@ -96,6 +97,7 @@ from utils.ipo.allotments import (
     mark_sold_row,
     mark_sold_selected,
     seed_allotments,
+    set_common_listing_price,
     unmark_sold,
     unmark_sold_selected,
     update_allotment,
@@ -1914,6 +1916,28 @@ async def ipo_seed_allotments(admin: AdminAuth, payload: AllotmentSeedRequest) -
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/common-price")
+async def ipo_set_common_listing_price(
+    admin: AdminAuth, payload: CommonListingPriceRequest
+) -> JSONResponse:
+    """Save common sold price and refresh sold_price on sold allotment rows."""
+    try:
+        result = await asyncio.to_thread(
+            set_common_listing_price,
+            payload.ipo_id,
+            listing_price=payload.listing_price,
+            clear=payload.clear_listing_price,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to save common listing price")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content=result)
 
