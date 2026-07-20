@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS ipo_sells (
   sell_rate NUMERIC(18, 4) NOT NULL CHECK (sell_rate >= 0),
   sell_amt NUMERIC(18, 4) NOT NULL CHECK (sell_amt >= 0),
   sell_party TEXT NOT NULL,
-  dalal NUMERIC(18, 4),
+  brokerage NUMERIC(18, 4),
   notes TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

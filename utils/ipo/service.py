@@ -43,6 +43,15 @@ def _money(value: float | int | Decimal | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
+def _calc_brokerage(
+    sell_app: float | Decimal, sell_rate: float | Decimal, buy_rate: float | Decimal
+) -> Decimal:
+    """Earned brokerage = sell amount − buy amount for the sold quantity."""
+    sell_amt = _money(sell_app) * _money(sell_rate)
+    buy_amt_for_sold = _money(sell_app) * _money(buy_rate)
+    return (sell_amt - buy_amt_for_sold).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -524,6 +533,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
+    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"])
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     sell_row = {
         "broker_id": broker_id,
@@ -533,7 +543,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "sell_rate": float(_money(sell_rate)),
         "sell_amt": float(sell_amt),
         "sell_party": sell_party_name,
-        "dalal": None if payload.sell_dalal is None else float(_money(payload.sell_dalal)),
+        "brokerage": float(brokerage),
         "notes": "",
         "updated_at": _now(),
     }
@@ -675,6 +685,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
     sell_amt = (_money(payload.sell_app) * _money(payload.sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
+    brokerage = _calc_brokerage(payload.sell_app, payload.sell_rate, position["buy_rate"])
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     row = {
         "broker_id": broker_id,
@@ -684,7 +695,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         "sell_rate": float(_money(payload.sell_rate)),
         "sell_amt": float(sell_amt),
         "sell_party": sell_party_name,
-        "dalal": None if payload.dalal is None else float(_money(payload.dalal)),
+        "brokerage": float(brokerage),
         "notes": payload.notes or "",
         "updated_at": _now(),
     }
@@ -732,12 +743,7 @@ def update_sell(
 
     sell_rate = payload.sell_rate if payload.sell_rate is not None else existing_sell["sell_rate"]
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
-    if payload.clear_dalal:
-        dalal: float | None = None
-    elif payload.dalal is not None:
-        dalal = float(_money(payload.dalal))
-    else:
-        dalal = existing_sell["dalal"]
+    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"])
 
     patch = {
         "sell_date": payload.sell_date or existing_sell["sell_date"],
@@ -749,7 +755,7 @@ def update_sell(
             if payload.sell_party is not None
             else existing_sell["sell_party"]
         ),
-        "dalal": dalal,
+        "brokerage": float(brokerage),
         "notes": payload.notes if payload.notes is not None else existing_sell["notes"],
         "updated_at": _now(),
     }

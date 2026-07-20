@@ -395,6 +395,10 @@ def applicant_to_json(
 
 
 def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    # Prefer brokerage; fall back to legacy dalal if migration not applied yet
+    brokerage_raw = row.get("brokerage")
+    if brokerage_raw is None:
+        brokerage_raw = row.get("dalal")
     return {
         "id": str(row.get("id") or ""),
         "broker_id": str(row.get("broker_id") or ""),
@@ -404,7 +408,7 @@ def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
         "sell_rate": float(row.get("sell_rate") or 0),
         "sell_amt": float(row.get("sell_amt") or 0),
         "sell_party": row.get("sell_party"),
-        "dalal": None if row.get("dalal") is None else float(row.get("dalal")),
+        "brokerage": None if brokerage_raw is None else float(brokerage_raw),
         "notes": row.get("notes") or "",
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
