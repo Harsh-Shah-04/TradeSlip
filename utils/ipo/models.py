@@ -96,6 +96,12 @@ class AllotmentSeedRequest(BaseModel):
     ipo_id: str = Field(min_length=1)
 
 
+class CommonListingPriceRequest(BaseModel):
+    ipo_id: str = Field(min_length=1)
+    listing_price: float | None = Field(default=None, ge=0)
+    clear_listing_price: bool = False
+
+
 class MarkSoldRequest(BaseModel):
     ipo_id: str = Field(min_length=1)
     sell_date: str = Field(min_length=10, max_length=10)

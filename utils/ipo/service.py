@@ -249,6 +249,12 @@ def update_ipo(ipo_id: str, payload: IpoMasterUpdate) -> dict[str, Any]:
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Update IPO failed ({response.status_code}): {response.text[:300]}")
+    # Keep sold allotment sold_price in sync with common listing price (Settlement reads sold_price).
+    if payload.clear_listing_price or payload.listing_price is not None:
+        from utils.ipo.allotments import sync_sold_prices_from_listing
+
+        next_price = None if payload.clear_listing_price else float(payload.listing_price)
+        sync_sold_prices_from_listing(ipo_id, next_price)
     return get_ipo(ipo_id)
 
 

@@ -4,7 +4,7 @@
 {% block content %}
 <header class="mb-6">
   <h1 class="text-3xl font-bold text-slate-900">Settlement & Reports</h1>
-  <p class="text-slate-600 mt-1">Preview party and applicant settlement after listing sales. Finalize to post Client Ledger balances.</p>
+  <p class="text-slate-600 mt-1">See both sides: what to <strong>give</strong> buy parties (clients), and what to <strong>take</strong> from sell parties (Ambica, Mama, …). Finalize posts Client Ledger for buy parties.</p>
 </header>
 
 {% if not is_admin %}
@@ -25,11 +25,19 @@
   </div>
   <p id="warnMsg" class="mt-2 text-sm text-amber-700"></p>
   <p id="statusMsg" class="mt-1 text-sm text-slate-500"></p>
+  <div id="filterBar" class="hidden mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+    <span class="font-medium">Filter:</span>
+    <span id="filterLabel"></span>
+    <button type="button" id="clearFilterBtn" class="ml-auto rounded-md border border-sky-300 bg-white px-2.5 py-1 text-xs font-semibold text-sky-900 hover:bg-sky-100">Clear filter</button>
+  </div>
 </section>
 
-<section class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+<section class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-4 py-3 border-b font-semibold">Party summary</div>
+    <div class="px-4 py-3 border-b">
+      <h2 class="font-semibold text-slate-900">Buy parties (clients) — give / settle</h2>
+      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter applicants &amp; sell trades · Payable = you pay them · Receivable = they pay you</p>
+    </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 text-xs uppercase text-slate-600">
@@ -49,10 +57,42 @@
         </tbody>
       </table>
     </div>
-    <p id="brokerageRow" class="px-4 py-2 text-sm text-slate-600 border-t"></p>
   </div>
+
+  <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50/50">
+      <h2 class="font-semibold text-emerald-950">Sell parties — take from (Ambica, Mama, …)</h2>
+      <p class="text-xs text-emerald-800 mt-0.5">Click a row to filter · Payable = you pay them · Premium is a separate row</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-emerald-50/80 text-xs uppercase text-emerald-900">
+          <tr>
+            <th class="px-3 py-2 text-left">Sell party</th>
+            <th class="px-3 py-2 text-left">Type</th>
+            <th class="px-3 py-2 text-right">Applied</th>
+            <th class="px-3 py-2 text-right">Allotted</th>
+            <th class="px-3 py-2 text-right">Shares</th>
+            <th class="px-3 py-2 text-right">Sell amt</th>
+            <th class="px-3 py-2 text-right">Vyaj</th>
+            <th class="px-3 py-2 text-right">Net P/L</th>
+            <th class="px-3 py-2">Dir</th>
+          </tr>
+        </thead>
+        <tbody id="sellPartyBody" class="divide-y divide-slate-100">
+          <tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-cols-1 xl:grid-cols-2 gap-4">
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-4 py-3 border-b font-semibold">Applicant lines</div>
+    <div class="px-4 py-3 border-b">
+      <h2 class="font-semibold text-slate-900">Applicant lines (buy / allotment side)</h2>
+      <p class="text-xs text-slate-500 mt-0.5">Click a row to filter by that buy party</p>
+    </div>
     <div class="overflow-x-auto max-h-[32rem]">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 text-xs uppercase text-slate-600 sticky top-0">
@@ -70,6 +110,35 @@
       </table>
     </div>
   </div>
+
+  <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-emerald-100">
+      <h2 class="font-semibold text-emerald-950">Sell trades (detail)</h2>
+      <p class="text-xs text-emerald-800 mt-0.5">Click a row to filter by that sell + buy party</p>
+    </div>
+    <div class="overflow-x-auto max-h-[32rem]">
+      <table class="w-full text-sm">
+        <thead class="bg-emerald-50/80 text-xs uppercase text-emerald-900 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">Date</th>
+            <th class="px-3 py-2 text-left">Sell party</th>
+            <th class="px-3 py-2 text-left">Type</th>
+            <th class="px-3 py-2 text-left">Buy party</th>
+            <th class="px-3 py-2 text-right">Applied</th>
+            <th class="px-3 py-2 text-right">Allotted</th>
+            <th class="px-3 py-2 text-right">Shares</th>
+            <th class="px-3 py-2 text-right">Sell amt</th>
+            <th class="px-3 py-2 text-right">Vyaj</th>
+            <th class="px-3 py-2 text-right">Net</th>
+            <th class="px-3 py-2">Dir</th>
+          </tr>
+        </thead>
+        <tbody id="sellLineBody" class="divide-y divide-slate-100">
+          <tr><td colspan="11" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </section>
 {% endif %}
 {% endblock %}
@@ -78,9 +147,122 @@
 {% if is_admin %}
 <script>
   let draftId = null;
+  let previewData = null;
+  let filter = { buyParty: null, sellParty: null, isPremium: null };
 
   function fmt(n) {
     return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  }
+
+  function norm(s) {
+    return String(s || "").trim().toLowerCase();
+  }
+
+  function dirClass(d) {
+    return d === "Payable" ? "text-amber-700" : d === "Receivable" ? "text-emerald-700" : "text-slate-600";
+  }
+
+  function isPremiumLine(row) {
+    return !!(row && (row.is_premium || row.line_type === "Premium"));
+  }
+
+  function hasFilter() {
+    return !!(filter.buyParty || filter.sellParty || filter.isPremium != null);
+  }
+
+  function sameBuy(a, b) {
+    return norm(a) === norm(b);
+  }
+
+  function sameSell(a, b) {
+    return norm(a) === norm(b);
+  }
+
+  function sellLineMatches(l) {
+    if (filter.buyParty && !sameBuy(l.buy_party, filter.buyParty)) return false;
+    if (filter.sellParty && !sameSell(l.sell_party, filter.sellParty)) return false;
+    if (filter.isPremium != null && isPremiumLine(l) !== filter.isPremium) return false;
+    return true;
+  }
+
+  function applicantMatches(l) {
+    if (!hasFilter()) return true;
+    if (filter.buyParty) return sameBuy(l.party_name, filter.buyParty);
+    // Sell-party filter: show applicants for buy parties that sold to that sell party
+    const sellLines = (previewData && previewData.sell_lines) || [];
+    const buyNames = new Set(
+      sellLines.filter(sellLineMatches).map((x) => norm(x.buy_party))
+    );
+    return buyNames.has(norm(l.party_name));
+  }
+
+  function buyPartyMatches(p) {
+    if (!hasFilter()) return true;
+    if (filter.buyParty) return sameBuy(p.party_name, filter.buyParty);
+    const sellLines = (previewData && previewData.sell_lines) || [];
+    const buyNames = new Set(
+      sellLines.filter(sellLineMatches).map((x) => norm(x.buy_party))
+    );
+    return buyNames.has(norm(p.party_name));
+  }
+
+  function sellPartyMatches(p) {
+    if (!hasFilter()) return true;
+    const base = p.sell_party_base || p.sell_party || "";
+    const premium = isPremiumLine(p);
+    if (filter.sellParty && !sameSell(base, filter.sellParty)) return false;
+    if (filter.isPremium != null && premium !== filter.isPremium) return false;
+    if (filter.buyParty) {
+      const sellLines = (previewData && previewData.sell_lines) || [];
+      return sellLines.some(
+        (l) =>
+          sameSell(l.sell_party, base) &&
+          isPremiumLine(l) === premium &&
+          sameBuy(l.buy_party, filter.buyParty)
+      );
+    }
+    return true;
+  }
+
+  function setFilter(next) {
+    filter = {
+      buyParty: next.buyParty != null ? next.buyParty : null,
+      sellParty: next.sellParty != null ? next.sellParty : null,
+      isPremium: next.isPremium != null ? next.isPremium : null,
+    };
+    // Toggle off if clicking the same active filter again
+    paintAll();
+  }
+
+  function clearFilter() {
+    filter = { buyParty: null, sellParty: null, isPremium: null };
+    paintAll();
+  }
+
+  function updateFilterBar() {
+    const bar = document.getElementById("filterBar");
+    const label = document.getElementById("filterLabel");
+    if (!hasFilter()) {
+      bar.classList.add("hidden");
+      label.textContent = "";
+      return;
+    }
+    const parts = [];
+    if (filter.buyParty) parts.push(`Buy party: ${filter.buyParty}`);
+    if (filter.sellParty) {
+      const type = filter.isPremium ? "Premium" : filter.isPremium === false ? "Application" : "";
+      parts.push(`Sell party: ${filter.sellParty}${type ? ` (${type})` : ""}`);
+    } else if (filter.isPremium != null) {
+      parts.push(filter.isPremium ? "Type: Premium" : "Type: Application");
+    }
+    label.textContent = parts.join(" · ");
+    bar.classList.remove("hidden");
+  }
+
+  function rowBtnClass(active) {
+    return active
+      ? "cursor-pointer bg-sky-100/90 ring-1 ring-inset ring-sky-300"
+      : "cursor-pointer hover:bg-slate-50";
   }
 
   async function loadIpos() {
@@ -93,27 +275,104 @@
     ).join("");
   }
 
-  function renderPreview(data) {
-    document.getElementById("warnMsg").textContent = (data.warnings || []).join(" · ");
-    const parties = data.party_summary || [];
-    document.getElementById("partyBody").innerHTML = parties.length
-      ? parties.map((p) => `<tr>
-          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(p.party_name)}</td>
+  function paintBuyParties() {
+    const parties = (previewData && previewData.party_summary) || [];
+    const visible = parties.filter(buyPartyMatches);
+    document.getElementById("partyBody").innerHTML = visible.length
+      ? visible.map((p) => {
+          const active = filter.buyParty && sameBuy(p.party_name, filter.buyParty);
+          return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(p.party_name || "")}">
+          <td class="px-3 py-2 font-medium text-sky-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(p.party_name)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.vyaj)}</td>
           <td class="px-3 py-2 text-right font-semibold">${fmt(p.net_pl)}</td>
-          <td class="px-3 py-2 text-xs">${TradeSlip.escapeHtml(p.direction)}</td>
-        </tr>`).join("")
-      : '<tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">No lines.</td></tr>';
-    const br = data.grey_market_brokerage;
-    document.getElementById("brokerageRow").textContent =
-      br != null ? `Grey-market brokerage (dalali) total: ${fmt(br)}` : "";
-    const lines = data.lines || [];
-    document.getElementById("lineBody").innerHTML = lines.length
-      ? lines.map((l) => `<tr>
+          <td class="px-3 py-2 text-xs font-medium ${dirClass(p.direction)}">${TradeSlip.escapeHtml(p.direction)}</td>
+        </tr>`;
+        }).join("")
+      : `<tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">${parties.length ? "No buy parties match this filter." : "No buy-party lines."}</td></tr>`;
+
+    document.querySelectorAll("#partyBody tr[data-filter-buy]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const name = tr.getAttribute("data-filter-buy") || "";
+        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.isPremium == null) {
+          clearFilter();
+          return;
+        }
+        setFilter({ buyParty: name, sellParty: null, isPremium: null });
+      });
+    });
+  }
+
+  function paintSellParties() {
+    const sellParties = (previewData && previewData.sell_party_summary) || [];
+    const sellTotals = (previewData && previewData.sell_party_totals) || {};
+    const visible = sellParties.filter(sellPartyMatches);
+    const showTotals = !hasFilter() && sellTotals.sell_amt != null;
+
+    document.getElementById("sellPartyBody").innerHTML = visible.length
+      ? visible.map((p) => {
+          const base = p.sell_party_base || p.sell_party || "—";
+          const premium = isPremiumLine(p);
+          const typeLabel = premium ? "Premium" : "Application";
+          const active =
+            filter.sellParty &&
+            sameSell(base, filter.sellParty) &&
+            (filter.isPremium == null || filter.isPremium === premium);
+          return `<tr class="${rowBtnClass(active)}" data-filter-sell="${TradeSlip.escapeHtml(base)}" data-filter-premium="${premium ? "1" : "0"}">
+          <td class="px-3 py-2 font-medium text-emerald-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(base)}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${premium ? "text-violet-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
+          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(p.allotted)}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${fmt(p.vyaj)}</td>
+          <td class="px-3 py-2 text-right font-semibold">${fmt(p.net_pl)}</td>
+          <td class="px-3 py-2 text-xs font-medium ${dirClass(p.direction)}">${TradeSlip.escapeHtml(p.direction)}</td>
+        </tr>`;
+        }).join("") +
+        (showTotals
+          ? `<tr class="bg-emerald-50/80 font-semibold">
+              <td class="px-3 py-2">Total</td>
+              <td class="px-3 py-2"></td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.applied)}</td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.allotted)}</td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.shares_allotted)}</td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.sell_amt)}</td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.vyaj)}</td>
+              <td class="px-3 py-2 text-right">${fmt(sellTotals.net_pl)}</td>
+              <td class="px-3 py-2"></td>
+            </tr>`
+          : "")
+      : `<tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">${sellParties.length ? "No sell parties match this filter." : "No grey-market sells yet. Record sells on Positions (sell party = Ambica / Mama / …)."}</td></tr>`;
+
+    document.querySelectorAll("#sellPartyBody tr[data-filter-sell]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const sell = tr.getAttribute("data-filter-sell") || "";
+        const premium = tr.getAttribute("data-filter-premium") === "1";
+        if (
+          filter.sellParty &&
+          sameSell(filter.sellParty, sell) &&
+          filter.isPremium === premium &&
+          !filter.buyParty
+        ) {
+          clearFilter();
+          return;
+        }
+        setFilter({ buyParty: null, sellParty: sell, isPremium: premium });
+      });
+    });
+  }
+
+  function paintApplicants() {
+    const lines = (previewData && previewData.lines) || [];
+    const visible = lines.filter(applicantMatches);
+    document.getElementById("lineBody").innerHTML = visible.length
+      ? visible.map((l) => {
+          const active = filter.buyParty && sameBuy(l.party_name, filter.buyParty);
+          return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(l.party_name || "")}">
           <td class="px-3 py-2">${TradeSlip.escapeHtml(l.applicant_name || "—")}
             <div class="text-xs text-slate-500">${TradeSlip.escapeHtml(l.party_name || "")}</div>
           </td>
@@ -121,9 +380,90 @@
           <td class="px-3 py-2 text-right">${fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
-        </tr>`).join("")
-      : '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">No lines.</td></tr>';
+        </tr>`;
+        }).join("")
+      : `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">${lines.length ? "No applicants match this filter." : "No applicant lines."}</td></tr>`;
+
+    document.querySelectorAll("#lineBody tr[data-filter-buy]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const name = tr.getAttribute("data-filter-buy") || "";
+        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.isPremium == null) {
+          clearFilter();
+          return;
+        }
+        setFilter({ buyParty: name, sellParty: null, isPremium: null });
+      });
+    });
   }
+
+  function paintSellTrades() {
+    const sellLines = (previewData && previewData.sell_lines) || [];
+    const visible = sellLines.filter(sellLineMatches);
+    document.getElementById("sellLineBody").innerHTML = visible.length
+      ? visible.map((l) => {
+          const premium = isPremiumLine(l);
+          const typeLabel = premium ? "Premium" : "Application";
+          const active =
+            (!filter.buyParty || sameBuy(l.buy_party, filter.buyParty)) &&
+            (!filter.sellParty || sameSell(l.sell_party, filter.sellParty)) &&
+            (filter.isPremium == null || filter.isPremium === premium) &&
+            hasFilter();
+          return `<tr class="${rowBtnClass(active)}"
+            data-filter-buy="${TradeSlip.escapeHtml(l.buy_party || "")}"
+            data-filter-sell="${TradeSlip.escapeHtml(l.sell_party || "")}"
+            data-filter-premium="${premium ? "1" : "0"}">
+          <td class="px-3 py-2 whitespace-nowrap">${TradeSlip.escapeHtml(l.sell_date || "—")}</td>
+          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(l.sell_party || "—")}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${premium ? "text-violet-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
+          <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(l.buy_party || "—")}</td>
+          <td class="px-3 py-2 text-right">${fmt(l.applied)}</td>
+          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(l.allotted)}</td>
+          <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
+          <td class="px-3 py-2 text-right font-semibold">${fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
+          <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
+          <td class="px-3 py-2 text-xs font-medium ${dirClass(l.direction)}">${TradeSlip.escapeHtml(l.direction || "")}</td>
+        </tr>`;
+        }).join("")
+      : `<tr><td colspan="11" class="px-4 py-6 text-center text-slate-500">${sellLines.length ? "No sell trades match this filter." : "No sell trades."}</td></tr>`;
+
+    document.querySelectorAll("#sellLineBody tr[data-filter-sell]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const buy = tr.getAttribute("data-filter-buy") || "";
+        const sell = tr.getAttribute("data-filter-sell") || "";
+        const premium = tr.getAttribute("data-filter-premium") === "1";
+        if (
+          filter.buyParty &&
+          sameBuy(filter.buyParty, buy) &&
+          filter.sellParty &&
+          sameSell(filter.sellParty, sell) &&
+          filter.isPremium === premium
+        ) {
+          clearFilter();
+          return;
+        }
+        setFilter({ buyParty: buy, sellParty: sell, isPremium: premium });
+      });
+    });
+  }
+
+  function paintAll() {
+    updateFilterBar();
+    if (!previewData) return;
+    document.getElementById("warnMsg").textContent = (previewData.warnings || []).join(" · ");
+    paintBuyParties();
+    paintSellParties();
+    paintApplicants();
+    paintSellTrades();
+  }
+
+  function renderPreview(data) {
+    previewData = data;
+    filter = { buyParty: null, sellParty: null, isPremium: null };
+    paintAll();
+  }
+
+  document.getElementById("clearFilterBtn").addEventListener("click", clearFilter);
 
   document.getElementById("previewBtn").addEventListener("click", async () => {
     const ipo_id = document.getElementById("ipoSelect").value;
@@ -137,7 +477,7 @@
     document.getElementById("finalizeBtn").disabled = true;
     document.getElementById("exportLink").classList.add("hidden");
     renderPreview(payload);
-    document.getElementById("statusMsg").textContent = "Preview only — not saved.";
+    document.getElementById("statusMsg").textContent = "Preview only — not saved. Click any row to filter the other tables.";
   });
 
   document.getElementById("draftBtn").addEventListener("click", async () => {
