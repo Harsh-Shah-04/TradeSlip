@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Client Ledger · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1200px] mx-auto px-4 py-8{% endblock %}
+{% block content %}
+<header class="mb-6">
+  <h1 class="text-3xl font-bold text-slate-900">Client Ledger</h1>
+  <p class="text-slate-600 mt-1">Continuous outstanding across all IPOs. + Receivable (client owes), − Payable (we owe).</p>
+</header>
+
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+    <div class="md:col-span-2">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="partySelect">Client (Party)</label>
+      <select id="partySelect" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+    </div>
+    <button type="button" id="loadBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Load ledger</button>
+  </div>
+  <div id="balanceBox" class="mt-4 hidden rounded-lg bg-slate-50 p-4">
+    <div class="text-xs text-slate-500 uppercase">Outstanding</div>
+    <div class="text-2xl font-bold" id="balanceValue">0</div>
+    <div class="text-sm text-slate-600" id="balanceDir"></div>
+  </div>
+</section>
+
+{% if is_admin %}
+<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+  <h2 class="font-semibold mb-3">Record payment</h2>
+  <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+    <div>
+      <label class="block text-xs font-medium mb-1" for="payType">Type</label>
+      <select id="payType" class="w-full rounded-lg border px-3 py-2 text-sm">
+        <option value="PaymentReceived">Payment received</option>
+        <option value="PaymentPaid">Payment paid</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium mb-1" for="payAmt">Amount</label>
+      <input type="number" id="payAmt" min="0" step="any" class="w-full rounded-lg border px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium mb-1" for="payDate">Date</label>
+      <input type="date" id="payDate" class="w-full rounded-lg border px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium mb-1" for="payNotes">Notes</label>
+      <input type="text" id="payNotes" class="w-full rounded-lg border px-3 py-2 text-sm" />
+    </div>
+    <button type="button" id="payBtn" class="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white">Save payment</button>
+  </div>
+</section>
+{% endif %}
+
+<section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="px-4 py-3 border-b flex justify-between items-center">
+    <span class="font-semibold">Entries</span>
+    <a id="statementLink" class="hidden text-sm font-semibold text-emerald-800" href="#">Export statement</a>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+        <tr>
+          <th class="px-3 py-2 text-left">Date</th>
+          <th class="px-3 py-2 text-left">Type</th>
+          <th class="px-3 py-2 text-right">Amount</th>
+          <th class="px-3 py-2 text-right">Balance</th>
+          <th class="px-3 py-2 text-left">Notes</th>
+        </tr>
+      </thead>
+      <tbody id="ledgerBody" class="divide-y divide-slate-100">
+        <tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Select a client.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const isAdmin = {{ "true" if is_admin else "false" }};
+  let parties = [];
+
+  function fmt(n) {
+    return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  }
+
+  async function loadParties() {
+    const response = await TradeSlip.apiFetch("/api/ipo/parties?status=Active");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+    parties = payload.parties || [];
+    document.getElementById("partySelect").innerHTML = parties.map((p) =>
+      `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}</option>`
+    ).join("");
+    if (isAdmin) document.getElementById("payDate").value = TradeSlip.todayIso();
+  }
+
+  function renderLedger(data) {
+    document.getElementById("balanceBox").classList.remove("hidden");
+    document.getElementById("balanceValue").textContent = fmt(data.balance);
+    document.getElementById("balanceDir").textContent = data.direction || "";
+    const link = document.getElementById("statementLink");
+    link.href = `/api/ipo/ledger/${encodeURIComponent(data.party_id)}/statement.xlsx`;
+    link.classList.remove("hidden");
+    const entries = data.entries || [];
+    document.getElementById("ledgerBody").innerHTML = entries.length
+      ? entries.map((e) => `<tr>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml((e.entry_date || "").slice(0, 10))}</td>
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(e.entry_type)}</td>
+          <td class="px-3 py-2 text-right">${fmt(e.amount)}</td>
+          <td class="px-3 py-2 text-right font-medium">${fmt(e.balance_after)}</td>
+          <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(e.notes || "")}</td>
+        </tr>`).join("")
+      : '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No entries yet.</td></tr>';
+  }
+
+  document.getElementById("loadBtn").addEventListener("click", async () => {
+    const party_id = document.getElementById("partySelect").value;
+    const response = await TradeSlip.apiFetch(`/api/ipo/ledger?party_id=${encodeURIComponent(party_id)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(TradeSlip.parseErrorDetail(payload));
+      return;
+    }
+    renderLedger(payload);
+  });
+
+  if (isAdmin) {
+    document.getElementById("payBtn").addEventListener("click", async () => {
+      const body = {
+        party_id: document.getElementById("partySelect").value,
+        entry_type: document.getElementById("payType").value,
+        amount: Number(document.getElementById("payAmt").value),
+        entry_date: document.getElementById("payDate").value,
+        notes: document.getElementById("payNotes").value.trim(),
+      };
+      const response = await TradeSlip.apiFetch("/api/ipo/ledger/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(TradeSlip.parseErrorDetail(payload));
+        return;
+      }
+      document.getElementById("payAmt").value = "";
+      renderLedger(payload);
+    });
+  }
+
+  loadParties().catch((e) => alert(e.message));
+</script>
+{% endblock %}

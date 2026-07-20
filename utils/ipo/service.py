@@ -171,6 +171,7 @@ def create_ipo(payload: IpoMasterCreate) -> dict[str, Any]:
         "amount_retail_2minus": payload.amount_retail_2minus,
         "amount_shareholder_15k": payload.amount_shareholder_15k,
         "amount_shareholder_2minus": payload.amount_shareholder_2minus,
+        "listing_price": payload.listing_price,
         "is_archived": False,
         "updated_at": _now(),
     }
@@ -230,6 +231,10 @@ def update_ipo(ipo_id: str, payload: IpoMasterUpdate) -> dict[str, Any]:
         patch["amount_shareholder_2minus"] = None
     elif payload.amount_shareholder_2minus is not None:
         patch["amount_shareholder_2minus"] = payload.amount_shareholder_2minus
+    if payload.clear_listing_price:
+        patch["listing_price"] = None
+    elif payload.listing_price is not None:
+        patch["listing_price"] = payload.listing_price
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
@@ -756,7 +761,7 @@ def update_sell(
             else existing_sell["sell_party"]
         ),
         "brokerage": float(brokerage),
-        "notes": payload.notes if payload.notes is not None else existing_sell["notes"],
+        "notes": payload.notes if payload.notes is not None else existing_sell.get("notes") or "",
         "updated_at": _now(),
     }
     response = httpx.patch(
