@@ -11,13 +11,13 @@
 </header>
 
 <section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
-  <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 items-end">
     <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="filterIpo">IPO</label>
       <select id="filterIpo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
     </div>
     <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterStatus">Status</label>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterStatus">Trade status</label>
       <select id="filterStatus" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
         <option value="">All</option>
         <option value="Open">Open</option>
@@ -26,15 +26,29 @@
       </select>
     </div>
     <div>
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">PARTY</label>
-      <input id="filterParty" type="text" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" />
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterCategory">Category</label>
+      <select id="filterCategory" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All</option>
+        <option value="IPO Application">IPO Application</option>
+        <option value="Premium">Premium</option>
+        <option value="Subject 2">Subject 2</option>
+      </select>
     </div>
-    <div class="flex items-end gap-2 md:col-span-2">
-      <button type="button" id="applyFilters" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Apply</button>
-      <button type="button" id="clearFilters" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">Clear</button>
-      <p id="posStatus" class="text-sm text-slate-500 ml-2"></p>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterParty">Party</label>
+      <select id="filterParty" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All parties</option>
+      </select>
+    </div>
+    <div class="md:col-span-2 xl:col-span-2">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSearch">Search</label>
+      <div class="flex gap-2">
+        <input id="filterSearch" type="search" placeholder="Party, IPO, category, sub-cat, status…" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" autocomplete="off" />
+        <button type="button" id="clearFilters" class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Clear</button>
+      </div>
     </div>
   </div>
+  <p id="posStatus" class="text-sm text-slate-500 mt-2"></p>
 </section>
 
 <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -255,19 +269,25 @@
 {% block scripts %}
 <script>
   let positions = [];
+  let allPositions = [];
   let activeIpos = [];
   let currentDetail = null;
   let clientParties = [];
   let applicantsByParty = {};
   let sellPartyOptions = [];
+  let searchTimer = null;
 
   const posBody = document.getElementById("posBody");
   const posStatus = document.getElementById("posStatus");
   const filterIpo = document.getElementById("filterIpo");
+  const filterStatus = document.getElementById("filterStatus");
+  const filterCategory = document.getElementById("filterCategory");
+  const filterParty = document.getElementById("filterParty");
+  const filterSearch = document.getElementById("filterSearch");
 
   function setMsg(el, msg, tone) {
     el.textContent = msg || "";
-    el.className = "text-sm ml-2 " + (tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : "text-slate-500");
+    el.className = "text-sm mt-2 " + (tone === "error" ? "text-red-600" : tone === "success" ? "text-green-600" : "text-slate-500");
   }
 
   function fmt(n) {
@@ -377,11 +397,75 @@
     if (currentIpoId) buySelect.value = currentIpoId;
   }
 
-  function upsertPositionLocal(item) {
-    const idx = positions.findIndex((p) => p.id === item.id);
-    if (idx >= 0) positions[idx] = item;
-    else positions.unshift(item);
+  function fillPartyFilterOptions() {
+    const selected = filterParty.value;
+    const names = new Set();
+    clientParties.forEach((p) => {
+      if (p.name) names.add(p.name);
+    });
+    allPositions.forEach((p) => {
+      if (p.party) names.add(p.party);
+    });
+    const sorted = Array.from(names).sort((a, b) => a.localeCompare(b));
+    filterParty.innerHTML =
+      '<option value="">All parties</option>' +
+      sorted
+        .map((name) => `<option value="${TradeSlip.escapeHtml(name)}">${TradeSlip.escapeHtml(name)}</option>`)
+        .join("");
+    if (selected && sorted.includes(selected)) filterParty.value = selected;
+    else if (selected) {
+      const opt = document.createElement("option");
+      opt.value = selected;
+      opt.textContent = selected;
+      filterParty.appendChild(opt);
+      filterParty.value = selected;
+    }
+  }
+
+  function positionMatchesSearch(p, q) {
+    if (!q) return true;
+    const ipoName = (p.ipo && (p.ipo.display_name || p.ipo.name)) || "";
+    const hay = [
+      p.party,
+      ipoName,
+      p.category,
+      p.sub_category,
+      p.status,
+      p.allocation_status,
+      p.trade_date,
+      String(p.buy_app || ""),
+      String(p.buy_rate || ""),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return q.split(/\s+/).every((token) => token && hay.includes(token));
+  }
+
+  function applyClientFilters() {
+    const status = filterStatus.value;
+    const category = filterCategory.value;
+    const party = filterParty.value;
+    const q = filterSearch.value.trim().toLowerCase();
+    positions = allPositions.filter((p) => {
+      if (status && p.status !== status) return false;
+      if (category && (p.category || "") !== category) return false;
+      if (party && (p.party || "") !== party) return false;
+      if (!positionMatchesSearch(p, q)) return false;
+      return true;
+    });
     renderPositions();
+  }
+
+  function upsertPositionLocal(item) {
+    const idx = allPositions.findIndex((p) => p.id === item.id);
+    if (idx >= 0) allPositions[idx] = { ...allPositions[idx], ...item };
+    else allPositions.unshift(item);
+    fillPartyFilterOptions();
+    applyClientFilters();
+  }
+
+  async function refreshPositionsKeepFilters() {
+    await loadPositions({ silent: true });
   }
 
   let tradeCategoryMeta = null;
@@ -488,9 +572,17 @@
   }
 
   function renderPositions() {
-    document.getElementById("posCount").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
+    const total = allPositions.length;
+    const shown = positions.length;
+    document.getElementById("posCount").textContent =
+      shown === total
+        ? `${shown} position${shown === 1 ? "" : "s"}`
+        : `${shown} of ${total} position${total === 1 ? "" : "s"}`;
     if (!positions.length) {
-      posBody.innerHTML = '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No positions yet. Record a buy against an Active IPO.</td></tr>';
+      posBody.innerHTML =
+        total > 0
+          ? '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No positions match these filters.</td></tr>'
+          : '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No positions yet. Record a buy against an Active IPO.</td></tr>';
       return;
     }
     posBody.innerHTML = positions
@@ -536,6 +628,7 @@
           const payload = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
           await loadPositions();
+          setMsg(posStatus, "Position deleted.", "success");
         } catch (e) {
           setMsg(posStatus, e.message, "error");
         } finally {
@@ -545,21 +638,21 @@
     });
   }
 
-  async function loadPositions() {
-    setMsg(posStatus, "Loading…", "info");
+  async function loadPositions(opts = {}) {
+    const silent = !!opts.silent;
+    if (!silent) setMsg(posStatus, "Loading…", "info");
     const params = new URLSearchParams();
     if (filterIpo.value) params.set("ipo_id", filterIpo.value);
-    if (document.getElementById("filterStatus").value) params.set("status", document.getElementById("filterStatus").value);
-    if (document.getElementById("filterParty").value.trim()) params.set("party", document.getElementById("filterParty").value.trim());
     try {
       const response = await TradeSlip.apiFetch(`/api/ipo/positions?${params}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-      positions = payload.positions || [];
-      renderPositions();
-      setMsg(posStatus, "", null);
+      allPositions = payload.positions || [];
+      fillPartyFilterOptions();
+      applyClientFilters();
+      if (!silent) setMsg(posStatus, "", null);
     } catch (e) {
-      posBody.innerHTML = `<tr><td colspan="10" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(e.message)}</td></tr>`;
+      posBody.innerHTML = `<tr><td colspan="11" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(e.message)}</td></tr>`;
       setMsg(posStatus, e.message, "error");
     }
   }
@@ -745,8 +838,7 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       closeBuyModal();
-      upsertPositionLocal(payload);
-      if (currentDetail && currentDetail.id === payload.id) currentDetail = { ...currentDetail, ...payload };
+      await loadPositions({ silent: true });
       const msg = editId
         ? "Buy updated."
         : body.include_sell
@@ -831,6 +923,7 @@
             const body = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(body));
             if (body.position && body.position.id) upsertPositionLocal(body.position);
+            await refreshPositionsKeepFilters();
             await openDetail(payload.id);
           } catch (e) {
             alert(e.message);
@@ -954,6 +1047,7 @@
       if (!document.getElementById("detailModal").classList.contains("hidden")) {
         fillAllocSummary(payload);
       }
+      await refreshPositionsKeepFilters();
       setMsg(posStatus, "Fully allocated.", "success");
     } catch (e) {
       err.textContent = e.message;
@@ -978,6 +1072,8 @@
       if (!document.getElementById("detailModal").classList.contains("hidden")) {
         fillAllocSummary(payload);
       }
+      await refreshPositionsKeepFilters();
+      setMsg(posStatus, "Allocation cleared.", "success");
     } catch (e) {
       alert(e.message);
     }
@@ -1026,6 +1122,7 @@
         currentDetail = payload.position;
       }
       endLoading();
+      await refreshPositionsKeepFilters();
       await openDetail(positionId);
     } catch (error) {
       err.textContent = error.message;
@@ -1039,17 +1136,33 @@
 
   document.getElementById("addBuyBtn").addEventListener("click", openBuyModal);
   document.getElementById("buyCancel").addEventListener("click", closeBuyModal);
-  document.getElementById("detailClose").addEventListener("click", () => document.getElementById("detailModal").classList.add("hidden"));
+  document.getElementById("detailClose").addEventListener("click", async () => {
+    document.getElementById("detailModal").classList.add("hidden");
+    await refreshPositionsKeepFilters();
+  });
   document.getElementById("allocClose").addEventListener("click", () => document.getElementById("allocModal").classList.add("hidden"));
   document.getElementById("allocCancel").addEventListener("click", () => document.getElementById("allocModal").classList.add("hidden"));
-  document.getElementById("applyFilters").addEventListener("click", loadPositions);
+
+  filterIpo.addEventListener("change", () => loadPositions());
+  filterStatus.addEventListener("change", () => applyClientFilters());
+  filterCategory.addEventListener("change", () => applyClientFilters());
+  filterParty.addEventListener("change", () => applyClientFilters());
+  filterSearch.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => applyClientFilters(), 200);
+  });
   document.getElementById("clearFilters").addEventListener("click", () => {
     filterIpo.value = "";
-    document.getElementById("filterStatus").value = "";
-    document.getElementById("filterParty").value = "";
+    filterStatus.value = "";
+    filterCategory.value = "";
+    filterParty.value = "";
+    filterSearch.value = "";
     loadPositions();
   });
 
-  Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster(), loadSellParties()]).then(loadPositions);
+  Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster(), loadSellParties()]).then(() => {
+    fillPartyFilterOptions();
+    return loadPositions();
+  });
 </script>
 {% endblock %}
