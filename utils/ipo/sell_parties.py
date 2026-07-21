@@ -163,6 +163,27 @@ def resolve_active_sell_party_name(raw: str | None) -> str:
     )
 
 
+def sell_party_ids_by_name(names: list[str]) -> dict[str, str]:
+    """Case-folded sell party name → id, for posting sell-side ledger entries."""
+    wanted = {(n or "").strip().casefold() for n in names if n and n.strip()}
+    if not wanted:
+        return {}
+    response = httpx.get(
+        f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
+        headers=_service_headers(),
+        params={"select": "id,name", "limit": "5000"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        return {}
+    out: dict[str, str] = {}
+    for row in response.json() or []:
+        key = (row.get("name") or "").strip().casefold()
+        if key in wanted and row.get("id"):
+            out[key] = str(row["id"])
+    return out
+
+
 def archive_sell_party(sell_party_id: str) -> dict[str, Any]:
     return update_sell_party(
         sell_party_id, SellPartyUpdate(is_archived=True, status="Inactive")

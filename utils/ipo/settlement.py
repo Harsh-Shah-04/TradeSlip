@@ -18,6 +18,7 @@ from utils.ipo.models import (
     settlement_line_to_json,
     settlement_to_json,
 )
+from utils.ipo.sell_parties import sell_party_ids_by_name
 from utils.ipo.service import get_ipo
 from utils.supabase_client import _service_headers, _supabase_url
 
@@ -907,21 +908,208 @@ def finalize_settlement(settlement_id: str) -> dict[str, Any]:
         raise RuntimeError(f"Finalize failed ({patch.status_code}): {patch.text[:300]}")
 
     # Post ledger: one entry per party for this settlement
+    post_settlement_entries(
+        ipo_id=str(row["ipo_id"]),
+        settlement_id=settlement_id,
+        party_nets=_settlement_party_nets(lines),
+        sell_party_nets=_sell_party_ledger_nets(str(row["ipo_id"])),
+    )
+    return get_settlement(settlement_id)
+
+
+def _finalized_settlement_id(ipo_id: str) -> str | None:
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+        headers=_service_headers(),
+        params={
+            "ipo_id": f"eq.{ipo_id}",
+            "status": "eq.Finalized",
+            "select": "id",
+            "limit": "1",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        return None
+    rows = response.json()
+    return str(rows[0]["id"]) if isinstance(rows, list) and rows else None
+
+
+def charge_breakdown(
+    *, account_type: str, account_id: str, account_name: str, ipo_id: str
+) -> dict[str, Any]:
+    """Two levels of depth behind one ledger charge.
+
+    * **funding** — for a client, which sell parties the money comes from
+      (MAMA ₹x, AIRAN ₹y); for a sell party, which clients their money goes to.
+      Both come from the sell trades, which record the sell party AND the buy
+      party on the same row.
+    * **applicants** — the account-by-account lines, exactly as they appear on
+      Settlement & Reports.
+    """
+    sell_lines = (_grey_market_sell_side(ipo_id).get("sell_lines")) or []
+    is_seller = account_type == "sell_party"
+    key = "sell_party" if is_seller else "buy_party"
+    other = "buy_party" if is_seller else "sell_party"
+    wanted = (account_name or "").strip().casefold()
+
+    mine = [l for l in sell_lines if (l.get(key) or "").strip().casefold() == wanted]
+
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    for line in mine:
+        counterparty = (line.get(other) or "—").strip() or "—"
+        line_type = line.get("line_type") or "Application"
+        bucket = buckets.setdefault(
+            (counterparty.casefold(), line_type),
+            {
+                "counterparty": counterparty,
+                "line_type": line_type,
+                "applied": 0.0,
+                "allotted": 0.0,
+                "shares_allotted": 0,
+                "market_amount": 0.0,
+                "vyaj": 0.0,
+                "brokerage": 0.0,
+                "amount": 0.0,
+                "trades": 0,
+            },
+        )
+        bucket["applied"] += float(line.get("applied") or 0)
+        bucket["allotted"] += float(line.get("allotted") or 0)
+        bucket["shares_allotted"] += int(line.get("shares_allotted") or 0)
+        bucket["market_amount"] += float(line.get("market_amount") or 0)
+        bucket["vyaj"] += float(line.get("vyaj") or 0)
+        bucket["brokerage"] += float(line.get("brokerage") or 0)
+        # Ledger sign: + means that sell party owes us (money coming in).
+        bucket["amount"] += -float(line.get("net_pl") or 0)
+        bucket["trades"] += 1
+
+    funding = sorted(
+        buckets.values(), key=lambda b: (-abs(b["amount"]), b["counterparty"].lower())
+    )
+    for bucket in funding:
+        for money_key in ("market_amount", "vyaj", "brokerage", "amount"):
+            bucket[money_key] = float(_money(bucket[money_key]))
+
+    applicants: list[dict[str, Any]] = []
+    if not is_seller:
+        settlement_id = _finalized_settlement_id(ipo_id)
+        if settlement_id:
+            applicants = [
+                settlement_line_to_json(row)
+                for row in _list_lines(settlement_id)
+                if str(row.get("party_id") or "") == str(account_id)
+            ]
+            applicants.sort(key=lambda a: (a.get("applicant_name") or "").lower())
+
+    return {
+        "account": {
+            "account_type": account_type,
+            "account_id": account_id,
+            "name": account_name,
+            "side": "seller" if is_seller else "client",
+        },
+        "funding": funding,
+        "funding_total": float(_money(sum(b["amount"] for b in funding))),
+        "funding_label": (
+            "Money from these clients" if is_seller else "Money comes from"
+        ),
+        "applicants": applicants,
+        "applicant_totals": {
+            "applied": float(_money(sum(a["applied"] for a in applicants))),
+            "allotted_apps": float(_money(sum(a["allotted_apps"] for a in applicants))),
+            "shares_allotted": sum(int(a["shares_allotted"]) for a in applicants),
+            "sell_amt": float(_money(sum(a["sell_amt"] for a in applicants))),
+            "vyaj": float(_money(sum(a["vyaj"] for a in applicants))),
+            "net_pl": float(_money(sum(a["net_pl"] for a in applicants))),
+            "count": len(applicants),
+        },
+    }
+
+
+def _settlement_party_nets(lines: list[dict[str, Any]]) -> dict[str, float]:
+    """Buy-side ledger charge per party — all of a party's applicants net into one."""
     party_nets: dict[str, float] = defaultdict(float)
-    party_names: dict[str, str] = {}
     for line in lines:
         pid = line.get("party_id")
         if not pid:
             continue
         party_nets[str(pid)] += float(line.get("net_pl") or 0)
-        party_names[str(pid)] = line.get("party_name") or ""
+    return dict(party_nets)
 
-    post_settlement_entries(
-        ipo_id=str(row["ipo_id"]),
-        settlement_id=settlement_id,
-        party_nets=dict(party_nets),
+
+def sync_finalized_settlement_ledger(ipo_id: str | None = None) -> dict[str, Any]:
+    """Post any ledger charges a finalized settlement is missing.
+
+    Idempotent — `post_settlement_entries` skips accounts that already have a
+    charge for the settlement. Needed because settlements finalized before sell
+    parties had ledger accounts only ever posted the buy side.
+    """
+    params: dict[str, str] = {
+        "select": "id,ipo_id",
+        "status": "eq.Finalized",
+        "order": "finalized_at.asc",
+        "limit": "5000",
+    }
+    if ipo_id:
+        params["ipo_id"] = f"eq.{ipo_id}"
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+        headers=_service_headers(),
+        params=params,
+        timeout=HTTP_TIMEOUT,
     )
-    return get_settlement(settlement_id)
+    if response.status_code != 200:
+        raise RuntimeError(f"List finalized settlements failed ({response.status_code})")
+
+    settlements = response.json() if isinstance(response.json(), list) else []
+    created: list[dict[str, Any]] = []
+    for row in settlements:
+        settlement_id = str(row.get("id") or "")
+        target_ipo = str(row.get("ipo_id") or "")
+        if not settlement_id or not target_ipo:
+            continue
+        created.extend(
+            post_settlement_entries(
+                ipo_id=target_ipo,
+                settlement_id=settlement_id,
+                party_nets=_settlement_party_nets(_list_lines(settlement_id)),
+                sell_party_nets=_sell_party_ledger_nets(target_ipo),
+            )
+        )
+    return {
+        "settlements_checked": len(settlements),
+        "entries_created": len(created),
+        "entries": created,
+    }
+
+
+def _sell_party_ledger_nets(ipo_id: str) -> dict[str, float]:
+    """Sell-party outstanding for this IPO, in ledger sign (+ receivable / − payable).
+
+    Sell-side `net_pl` uses the inverted convention (`_sell_side_direction`): a
+    positive listing P/L means we owe the sell party. The ledger is always
+    "+ they owe us", so the sign flips here.
+    """
+    sell_side = _grey_market_sell_side(ipo_id)
+    lines = sell_side.get("sell_lines") or []
+    by_name: dict[str, float] = defaultdict(float)
+    for line in lines:
+        name = (line.get("sell_party") or "").strip()
+        if not name or name == "—":
+            continue
+        by_name[name] += float(line.get("net_pl") or 0)
+    if not by_name:
+        return {}
+    ids = sell_party_ids_by_name(list(by_name))
+    nets: dict[str, float] = defaultdict(float)
+    for name, net in by_name.items():
+        sell_party_id = ids.get(name.casefold())
+        if not sell_party_id:
+            # Not in the Sell Party master — nothing to post against.
+            continue
+        nets[sell_party_id] += -float(net)
+    return {k: float(_money(v)) for k, v in nets.items()}
 
 
 def build_settlement_excel(settlement_id: str) -> bytes:

@@ -1,153 +1,1195 @@
 {% extends "base.html" %}
-{% block title %}Client Ledger · IPO Trading{% endblock %}
-{% block main_class %}max-w-[1200px] mx-auto px-4 py-8{% endblock %}
+{% block title %}Ledger · IPO Trading{% endblock %}
+{% block main_class %}max-w-[1500px] mx-auto px-4 py-6 pb-32{% endblock %}
 {% block content %}
-<header class="mb-6">
-  <h1 class="text-3xl font-bold text-slate-900">Client Ledger</h1>
-  <p class="text-slate-600 mt-1">Continuous outstanding across all IPOs. + Receivable (client owes), − Payable (we owe).</p>
+
+<header class="mb-5 flex flex-wrap items-start justify-between gap-3">
+  <div>
+    <h1 class="text-3xl font-bold text-slate-900">Ledger</h1>
+    <p class="text-slate-600 mt-1">Every rupee, every IPO, clients and sell parties together. Nothing is ever deleted from the record.</p>
+  </div>
+  {% if is_admin %}
+  <button type="button" id="syncBtn"
+          class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+          title="Post any ledger charges that finalized settlements are missing">Sync from settlements</button>
+  {% endif %}
 </header>
 
-<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-    <div class="md:col-span-2">
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="partySelect">Client (Party)</label>
-      <select id="partySelect" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+<!-- The middleman flow: collect from sell parties, pay the clients, keep the rest. -->
+<div class="rounded-xl border border-slate-200 bg-white p-4 mb-5 shadow-sm">
+  <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 items-center">
+    <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Take from sell parties</div>
+      <div class="text-2xl font-bold text-emerald-900 mt-1" id="flowCollect">0.00</div>
+      <div class="text-xs text-emerald-700 mt-0.5">Ambica, Mama, …</div>
     </div>
-    <button type="button" id="loadBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white">Load ledger</button>
+    <div class="hidden lg:block text-2xl text-slate-300 font-bold text-center">&rarr;</div>
+    <div class="rounded-lg border border-rose-200 bg-rose-50 p-4">
+      <div class="text-xs font-semibold uppercase tracking-wide text-rose-700">Give to clients</div>
+      <div class="text-2xl font-bold text-rose-900 mt-1" id="flowGive">0.00</div>
+      <div class="text-xs text-rose-700 mt-0.5">buy parties</div>
+    </div>
+    <div class="hidden lg:block text-2xl text-slate-300 font-bold text-center">=</div>
+    <div class="rounded-lg border-2 border-slate-800 bg-slate-900 p-4">
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-300">You keep</div>
+      <div class="text-2xl font-bold text-white mt-1" id="flowNet">0.00</div>
+      <div class="text-xs text-slate-400 mt-0.5" id="flowNetNote">brokerage</div>
+    </div>
   </div>
-  <div id="balanceBox" class="mt-4 hidden rounded-lg bg-slate-50 p-4">
-    <div class="text-xs text-slate-500 uppercase">Outstanding</div>
-    <div class="text-2xl font-bold" id="balanceValue">0</div>
-    <div class="text-sm text-slate-600" id="balanceDir"></div>
-  </div>
-</section>
+  <div id="flowExtras" class="hidden mt-3 flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600 border-t border-slate-100 pt-3"></div>
+  <div id="flowWarn" class="hidden mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
+</div>
 
-{% if is_admin %}
-<section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
-  <h2 class="font-semibold mb-3">Record payment</h2>
-  <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-    <div>
-      <label class="block text-xs font-medium mb-1" for="payType">Type</label>
-      <select id="payType" class="w-full rounded-lg border px-3 py-2 text-sm">
-        <option value="PaymentReceived">Payment received</option>
-        <option value="PaymentPaid">Payment paid</option>
-      </select>
-    </div>
-    <div>
-      <label class="block text-xs font-medium mb-1" for="payAmt">Amount</label>
-      <input type="number" id="payAmt" min="0" step="any" class="w-full rounded-lg border px-3 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium mb-1" for="payDate">Date</label>
-      <input type="date" id="payDate" class="w-full rounded-lg border px-3 py-2 text-sm" />
-    </div>
-    <div>
-      <label class="block text-xs font-medium mb-1" for="payNotes">Notes</label>
-      <input type="text" id="payNotes" class="w-full rounded-lg border px-3 py-2 text-sm" />
-    </div>
-    <button type="button" id="payBtn" class="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white">Save payment</button>
-  </div>
-</section>
-{% endif %}
+<!-- View switcher -->
+<div class="mb-4 inline-flex rounded-lg border border-slate-300 bg-white p-1">
+  <button type="button" data-view="person" class="viewTab rounded-md px-4 py-1.5 text-sm font-semibold">By person</button>
+  <button type="button" data-view="ipo" class="viewTab rounded-md px-4 py-1.5 text-sm font-semibold">By IPO</button>
+</div>
 
-<section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-  <div class="px-4 py-3 border-b flex justify-between items-center">
-    <span class="font-semibold">Entries</span>
-    <a id="statementLink" class="hidden text-sm font-semibold text-emerald-800" href="#">Export statement</a>
+<!-- ======================================================== PERSON LIST ==== -->
+<section id="personView" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="border-b border-slate-200 px-4 pt-3">
+    <div class="flex gap-1">
+      <button type="button" data-side="all" class="sideTab rounded-t-lg px-4 py-2 text-sm font-semibold">Everyone</button>
+      <button type="button" data-side="buyer" class="sideTab rounded-t-lg px-4 py-2 text-sm font-semibold">Clients</button>
+      <button type="button" data-side="seller" class="sideTab rounded-t-lg px-4 py-2 text-sm font-semibold">Sell parties</button>
+    </div>
   </div>
+
+  <div class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
+    <input type="search" id="searchBox" placeholder="Search name…"
+           class="flex-1 min-w-[200px] rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+    <label class="flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" id="showSettled" class="h-4 w-4 rounded border-slate-300" />
+      Show fully settled
+    </label>
+    <a id="overviewExport" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" href="#">Export</a>
+  </div>
+  <div id="tabTotal" class="px-4 py-2 text-sm text-slate-600 border-b border-slate-100"></div>
+
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
-      <thead class="bg-slate-50 text-xs uppercase text-slate-600">
+      <thead class="bg-white text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
         <tr>
-          <th class="px-3 py-2 text-left">Date</th>
-          <th class="px-3 py-2 text-left">Type</th>
-          <th class="px-3 py-2 text-right">Amount</th>
-          <th class="px-3 py-2 text-right">Balance</th>
-          <th class="px-3 py-2 text-left">Notes</th>
+          {% if is_admin %}
+          <th class="px-3 py-3 w-10"><input type="checkbox" id="selectAllAccounts" class="h-4 w-4 rounded border-slate-300" /></th>
+          {% endif %}
+          <th class="px-3 py-3 text-left">Name</th>
+          <th class="px-3 py-3 text-left">Type</th>
+          <th class="px-3 py-3 text-right">Pending IPOs</th>
+          <th class="px-3 py-3 text-right">To receive</th>
+          <th class="px-3 py-3 text-right">To pay</th>
+          <th class="px-3 py-3 text-right">Net outstanding</th>
+          <th class="px-3 py-3 text-left">Last activity</th>
+          <th class="px-3 py-3 w-24"></th>
         </tr>
       </thead>
-      <tbody id="ledgerBody" class="divide-y divide-slate-100">
-        <tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">Select a client.</td></tr>
+      <tbody id="accountsBody" class="divide-y divide-slate-100">
+        <tr><td colspan="9" class="px-4 py-12 text-center text-slate-400">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 </section>
+
+<!-- =========================================================== IPO LIST ==== -->
+<section id="ipoView" class="hidden bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-200">
+    <span class="font-semibold text-slate-900">Every IPO</span>
+    <span class="text-sm text-slate-500 ml-2">click one to see all clients and sell parties on it</span>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+        <tr>
+          <th class="px-3 py-3 text-left">IPO</th>
+          <th class="px-3 py-3 text-left">Listing</th>
+          <th class="px-3 py-3 text-right">Parties</th>
+          <th class="px-3 py-3 text-right">Pending</th>
+          <th class="px-3 py-3 text-right">To collect</th>
+          <th class="px-3 py-3 text-right">To give</th>
+          <th class="px-3 py-3 text-right">Left with you</th>
+          <th class="px-3 py-3 w-24"></th>
+        </tr>
+      </thead>
+      <tbody id="ipoListBody" class="divide-y divide-slate-100">
+        <tr><td colspan="8" class="px-4 py-12 text-center text-slate-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ========================================================= IPO DETAIL ==== -->
+<section id="ipoDetailView" class="hidden">
+  <button type="button" id="ipoBackBtn" class="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-slate-900">&larr; All IPOs</button>
+  <header class="mb-5 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h2 class="text-2xl font-bold text-slate-900" id="ipoDetailName">—</h2>
+      <p class="text-slate-600 mt-1" id="ipoDetailSub">—</p>
+    </div>
+    <div class="flex gap-6 text-right">
+      <div>
+        <div class="text-xs uppercase tracking-wide text-emerald-700 font-semibold">To collect</div>
+        <div class="text-xl font-bold text-emerald-800" id="ipoCollect">0.00</div>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wide text-rose-700 font-semibold">To give</div>
+        <div class="text-xl font-bold text-rose-800" id="ipoGive">0.00</div>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wide text-slate-500 font-semibold">Brokerage</div>
+        <div class="text-xl font-bold text-slate-900" id="ipoBrokerage">0.00</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+      <span class="font-semibold text-slate-900">Sell parties and clients on this IPO</span>
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <input type="checkbox" id="ipoShowDone" class="h-4 w-4 rounded border-slate-300" />
+        Show settled
+      </label>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            {% if is_admin %}
+            <th class="px-3 py-3 w-10"><input type="checkbox" id="selectAllIpoRows" class="h-4 w-4 rounded border-slate-300" /></th>
+            {% endif %}
+            <th class="px-3 py-3 text-left">Party</th>
+            <th class="px-3 py-3 text-left">Type</th>
+            <th class="px-3 py-3 text-right">Amount</th>
+            <th class="px-3 py-3 text-right">Paid</th>
+            <th class="px-3 py-3 text-right">Outstanding</th>
+            <th class="px-3 py-3 text-left">Status</th>
+            <th class="px-3 py-3 w-20"></th>
+          </tr>
+        </thead>
+        <tbody id="ipoRowsBody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================== PERSON DETAIL ==== -->
+<section id="detailView" class="hidden">
+  <button type="button" id="backBtn" class="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-slate-900">&larr; Back</button>
+
+  <header class="mb-5 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <div class="flex items-center gap-2">
+        <h2 class="text-3xl font-bold text-slate-900" id="detailName">—</h2>
+        <span id="detailSideBadge" class="rounded-full px-2 py-0.5 text-xs font-semibold"></span>
+      </div>
+      <p class="text-slate-600 mt-1" id="detailSubtitle">—</p>
+    </div>
+    <div class="text-right">
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Net outstanding</div>
+      <div class="text-3xl font-bold" id="detailBalance">0</div>
+      <div class="text-sm font-medium" id="detailDirection"></div>
+      <div class="mt-1 flex justify-end gap-3 text-sm font-semibold">
+        {% if is_admin %}
+        <button type="button" id="addAdjustBtn" class="text-slate-700 hover:underline">+ Adjustment</button>
+        {% endif %}
+        <a id="detailExport" class="text-emerald-800 hover:underline" href="#">Export statement</a>
+      </div>
+    </div>
+  </header>
+
+  <div id="onAccountNote" class="hidden mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"></div>
+
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200">
+      <div>
+        <span class="font-semibold text-slate-900">IPO-wise outstanding</span>
+        <span class="text-sm text-slate-500 ml-2">oldest first</span>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <input type="checkbox" id="showDoneItems" class="h-4 w-4 rounded border-slate-300" />
+        Show settled IPOs
+      </label>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            {% if is_admin %}
+            <th class="px-3 py-3 w-10"><input type="checkbox" id="selectAllItems" class="h-4 w-4 rounded border-slate-300" /></th>
+            {% endif %}
+            <th class="px-3 py-3 text-left">IPO</th>
+            <th class="px-3 py-3 text-left">Date</th>
+            <th class="px-3 py-3 text-right">Amount</th>
+            <th class="px-3 py-3 text-right">Paid</th>
+            <th class="px-3 py-3 text-right">Outstanding</th>
+            <th class="px-3 py-3 text-left">Status</th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-200">
+      <span class="font-semibold text-slate-900">Full history</span>
+      <span class="text-sm text-slate-500 ml-2">every charge and payment, oldest first — this is the permanent record</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="px-3 py-2 text-left">Date</th>
+            <th class="px-3 py-2 text-left">What</th>
+            <th class="px-3 py-2 text-left">IPO</th>
+            <th class="px-3 py-2 text-right">Amount</th>
+            <th class="px-3 py-2 text-right">Balance after</th>
+            <th class="px-3 py-2 text-left">Notes</th>
+            {% if is_admin %}<th class="px-3 py-2 w-24"></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody id="historyBody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% if is_admin %}
+<!-- ========================================================= ACTION BAR ==== -->
+<div id="actionBar" class="hidden fixed inset-x-0 bottom-0 z-40 border-t border-slate-300 bg-white shadow-[0_-4px_16px_rgba(15,23,42,0.10)]">
+  <div class="mx-auto max-w-[1500px] px-4 py-3 flex flex-wrap items-end gap-3">
+    <div class="flex-1 min-w-[180px]">
+      <div class="text-lg font-bold text-slate-900" id="barCount">0 selected</div>
+      <div class="text-sm" id="barTotal">—</div>
+    </div>
+    <div id="barAmountWrap">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="barAmount">Paying now</label>
+      <input type="number" id="barAmount" min="0" step="any"
+             class="w-40 rounded-lg border border-slate-300 px-3 py-2 text-sm text-right font-semibold" />
+      <div class="text-[11px] text-slate-500 mt-0.5">less = part paid, rest carries forward</div>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="barDate">Date</label>
+      <input type="date" id="barDate" class="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+    </div>
+    <div class="flex-1 min-w-[160px]">
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="barNotes">Notes</label>
+      <input type="text" id="barNotes" placeholder="cash / cheque no."
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+    </div>
+    <button type="button" id="barClear" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Clear</button>
+    <button type="button" id="barSubmit" class="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-800">Mark paid</button>
+  </div>
+</div>
+
+<!-- ============================================================= MODALS ==== -->
+<div id="adjustModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6">
+    <h3 class="text-lg font-bold text-slate-900">Add adjustment</h3>
+    <p class="text-sm text-slate-600 mt-1">
+      Opening balance carried forward from before this system, a write-off, a discount, or a correction.
+    </p>
+    <div class="mt-4 space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Which way?</label>
+        <select id="adjDirection" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          <option value="receive">They owe me more (+)</option>
+          <option value="pay">I owe them more (−)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="adjAmount">Amount</label>
+        <input type="number" id="adjAmount" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="adjDate">Date</label>
+        <input type="date" id="adjDate" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="adjNotes">Reason (required)</label>
+        <input type="text" id="adjNotes" placeholder="carried forward from old book" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end gap-2">
+      <button type="button" data-close="adjustModal" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Cancel</button>
+      <button type="button" id="adjSave" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white">Add</button>
+    </div>
+  </div>
+</div>
+
+<div id="editModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
+  <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6">
+    <h3 class="text-lg font-bold text-slate-900">Edit entry</h3>
+    <p class="text-sm text-slate-600 mt-1" id="editSubtitle">—</p>
+    <div class="mt-4 space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="editAmount">Amount</label>
+        <input type="number" id="editAmount" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <div class="text-[11px] text-slate-500 mt-0.5" id="editAmountHint"></div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="editDate">Date</label>
+        <input type="date" id="editDate" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="editNotes">Notes</label>
+        <input type="text" id="editNotes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      </div>
+    </div>
+    <div class="mt-5 flex justify-between gap-2">
+      <button type="button" id="editDelete" class="rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50">Delete</button>
+      <div class="flex gap-2">
+        <button type="button" data-close="editModal" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Cancel</button>
+        <button type="button" id="editSave" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+(function () {
   const isAdmin = {{ "true" if is_admin else "false" }};
-  let parties = [];
+  const $ = (id) => document.getElementById(id);
+  const esc = TradeSlip.escapeHtml;
 
-  function fmt(n) {
-    return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const state = {
+    view: "person",          // which list you came from: person | ipo
+    screen: "list",          // what is on screen now: list | person | ipo
+    side: "all",
+    accounts: [],
+    search: "",
+    showSettled: false,
+    account: null,
+    showDoneItems: false,
+    ipos: [],
+    ipo: null,
+    ipoShowDone: false,
+    selectedAccounts: new Set(),
+    selectedCharges: new Map(),   // chargeId -> {account_type, account_id, amount, outstanding}
+    breakdowns: new Map(),        // "accountId:ipoId" -> funding + account-wise detail
+    editing: null,
+  };
+
+  const money = (n) =>
+    Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  function amountClass(n) {
+    if (Math.abs(Number(n || 0)) < 0.005) return "text-slate-400";
+    return Number(n) > 0 ? "text-emerald-700" : "text-rose-700";
   }
 
-  async function loadParties() {
-    const response = await TradeSlip.apiFetch("/api/ipo/parties?status=Active");
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
-    parties = payload.parties || [];
-    document.getElementById("partySelect").innerHTML = parties.map((p) =>
-      `<option value="${TradeSlip.escapeHtml(p.id)}">${TradeSlip.escapeHtml(p.name)}</option>`
-    ).join("");
-    if (isAdmin) document.getElementById("payDate").value = TradeSlip.todayIso();
+  function statusBadge(status) {
+    const map = {
+      "Pending": "bg-amber-100 text-amber-800",
+      "Part paid": "bg-sky-100 text-sky-800",
+      "Done": "bg-slate-100 text-slate-500",
+    };
+    return `<span class="rounded-full px-2 py-0.5 text-xs font-semibold ${map[status] || map.Pending}">${esc(status)}</span>`;
   }
 
-  function renderLedger(data) {
-    document.getElementById("balanceBox").classList.remove("hidden");
-    document.getElementById("balanceValue").textContent = fmt(data.balance);
-    document.getElementById("balanceDir").textContent = data.direction || "";
-    const link = document.getElementById("statementLink");
-    link.href = `/api/ipo/ledger/${encodeURIComponent(data.party_id)}/statement.xlsx`;
-    link.classList.remove("hidden");
-    const entries = data.entries || [];
-    document.getElementById("ledgerBody").innerHTML = entries.length
-      ? entries.map((e) => `<tr>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml((e.entry_date || "").slice(0, 10))}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(e.entry_type)}</td>
-          <td class="px-3 py-2 text-right">${fmt(e.amount)}</td>
-          <td class="px-3 py-2 text-right font-medium">${fmt(e.balance_after)}</td>
-          <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(e.notes || "")}</td>
-        </tr>`).join("")
-      : '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No entries yet.</td></tr>';
+  function sideBadge(side) {
+    return side === "seller"
+      ? '<span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800">Sell party</span>'
+      : '<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">Client</span>';
   }
 
-  document.getElementById("loadBtn").addEventListener("click", async () => {
-    const party_id = document.getElementById("partySelect").value;
-    const response = await TradeSlip.apiFetch(`/api/ipo/ledger?party_id=${encodeURIComponent(party_id)}`);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert(TradeSlip.parseErrorDetail(payload));
+  // ------------------------------------------------------------- breakdown
+  // Two levels behind a charge: which counterparties fund it, then which of
+  // that person's accounts make it up (same numbers as Settlement & Reports).
+
+  function breakdownBtn(accountType, accountId, ipoId, key) {
+    if (!ipoId) return "";
+    return `<button type="button" class="bdBtn ml-2 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+      data-key="${esc(key)}" data-account-type="${esc(accountType)}" data-account-id="${esc(accountId)}" data-ipo-id="${esc(ipoId)}">Details</button>`;
+  }
+
+  function breakdownSlot(key, colspan) {
+    return `<tr class="bdRow hidden bg-slate-50/70" data-slot="${esc(key)}">
+      <td colspan="${colspan}" class="px-4 py-4"><div class="text-sm text-slate-400">Loading…</div></td></tr>`;
+  }
+
+  function fundingTable(d) {
+    if (!d.funding.length)
+      return '<div class="text-sm text-slate-500">No linked sell trades for this IPO.</div>';
+    const rows = d.funding.map((f) => `<tr>
+        <td class="px-3 py-1.5 font-semibold text-slate-900">${esc(f.counterparty)}</td>
+        <td class="px-3 py-1.5 text-slate-500">${esc(f.line_type)}</td>
+        <td class="px-3 py-1.5 text-right text-slate-600">${f.shares_allotted || "—"}</td>
+        <td class="px-3 py-1.5 text-right text-slate-600">${money(f.brokerage)}</td>
+        <td class="px-3 py-1.5 text-right font-bold ${amountClass(f.amount)}">${money(Math.abs(f.amount))}</td>
+      </tr>`).join("");
+    return `<table class="w-full text-xs">
+      <thead class="text-[11px] uppercase tracking-wide text-slate-500">
+        <tr><th class="px-3 py-1 text-left">Party</th><th class="px-3 py-1 text-left">Type</th>
+            <th class="px-3 py-1 text-right">Shares</th><th class="px-3 py-1 text-right">Brokerage</th>
+            <th class="px-3 py-1 text-right">Amount</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-200">${rows}</tbody>
+      <tfoot><tr class="border-t-2 border-slate-300 font-bold">
+        <td class="px-3 py-1.5" colspan="4">Total</td>
+        <td class="px-3 py-1.5 text-right">${money(Math.abs(d.funding_total))}</td>
+      </tr></tfoot></table>`;
+  }
+
+  function applicantTable(d) {
+    if (!d.applicants.length) return "";
+    const t = d.applicant_totals;
+    const rows = d.applicants.map((a) => `<tr>
+        <td class="px-3 py-1.5">
+          <div class="font-medium text-slate-900">${esc(a.applicant_name)}</div>
+          <div class="text-[11px] text-slate-400">${esc(a.pan || "")} ${esc(a.dpid || "")}</div>
+        </td>
+        <td class="px-3 py-1.5 text-slate-500">${esc(a.sub_category)}</td>
+        <td class="px-3 py-1.5 text-right">${a.applied}</td>
+        <td class="px-3 py-1.5 text-right ${a.allotted_apps > 0 ? "font-semibold text-emerald-700" : "text-slate-300"}">${a.allotted_apps}</td>
+        <td class="px-3 py-1.5 text-right">${a.shares_allotted || "—"}</td>
+        <td class="px-3 py-1.5 text-right text-slate-600">${money(a.vyaj)}</td>
+        <td class="px-3 py-1.5 text-right text-slate-600">${money(a.sell_amt)}</td>
+        <td class="px-3 py-1.5 text-right font-bold ${amountClass(a.net_pl)}">${money(a.net_pl)}</td>
+        <td class="px-3 py-1.5">${
+          a.allotted_apps > 0
+            ? '<span class="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800">Allotted</span>'
+            : '<span class="rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">Not allotted</span>'
+        }</td>
+      </tr>`).join("");
+    return `<table class="w-full text-xs">
+      <thead class="text-[11px] uppercase tracking-wide text-slate-500">
+        <tr><th class="px-3 py-1 text-left">Account</th><th class="px-3 py-1 text-left">Category</th>
+            <th class="px-3 py-1 text-right">Applied</th><th class="px-3 py-1 text-right">Allotted</th>
+            <th class="px-3 py-1 text-right">Shares</th><th class="px-3 py-1 text-right">Vyaj</th>
+            <th class="px-3 py-1 text-right">Sell amt</th><th class="px-3 py-1 text-right">Net</th>
+            <th class="px-3 py-1 text-left">Status</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-200">${rows}</tbody>
+      <tfoot><tr class="border-t-2 border-slate-300 font-bold">
+        <td class="px-3 py-1.5" colspan="2">${t.count} account${t.count > 1 ? "s" : ""}</td>
+        <td class="px-3 py-1.5 text-right">${t.applied}</td>
+        <td class="px-3 py-1.5 text-right">${t.allotted_apps}</td>
+        <td class="px-3 py-1.5 text-right">${t.shares_allotted}</td>
+        <td class="px-3 py-1.5 text-right">${money(t.vyaj)}</td>
+        <td class="px-3 py-1.5 text-right">${money(t.sell_amt)}</td>
+        <td class="px-3 py-1.5 text-right ${amountClass(t.net_pl)}">${money(t.net_pl)}</td>
+        <td></td>
+      </tr></tfoot></table>`;
+  }
+
+  function breakdownHtml(d) {
+    const applicants = applicantTable(d);
+    return `<div class="space-y-4">
+      <div>
+        <div class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1.5">${esc(d.funding_label)}</div>
+        <div class="rounded-lg border border-slate-200 bg-white p-2 overflow-x-auto">${fundingTable(d)}</div>
+      </div>
+      ${applicants ? `<div>
+        <div class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1.5">Account by account</div>
+        <div class="rounded-lg border border-slate-200 bg-white p-2 overflow-x-auto">${applicants}</div>
+      </div>` : ""}
+    </div>`;
+  }
+
+  async function toggleBreakdown(btn) {
+    const slot = document.querySelector(`.bdRow[data-slot="${CSS.escape(btn.dataset.key)}"]`);
+    if (!slot) return;
+    if (!slot.classList.contains("hidden")) { slot.classList.add("hidden"); return; }
+    slot.classList.remove("hidden");
+    const cacheKey = `${btn.dataset.accountId}:${btn.dataset.ipoId}`;
+    try {
+      if (!state.breakdowns.has(cacheKey)) {
+        const r = await TradeSlip.apiFetch(
+          `/api/ipo/ledger/breakdown?account_type=${encodeURIComponent(btn.dataset.accountType)}` +
+          `&account_id=${encodeURIComponent(btn.dataset.accountId)}&ipo_id=${encodeURIComponent(btn.dataset.ipoId)}`);
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        state.breakdowns.set(cacheKey, p);
+      }
+      slot.querySelector("td").innerHTML = breakdownHtml(state.breakdowns.get(cacheKey));
+    } catch (e) {
+      slot.querySelector("td").innerHTML =
+        `<div class="text-sm text-rose-700">${esc(e.message)}</div>`;
+    }
+  }
+
+  function show(id) {
+    ["personView", "ipoView", "ipoDetailView", "detailView"].forEach((s) =>
+      $(s).classList.toggle("hidden", s !== id));
+  }
+
+  // ------------------------------------------------------------------- flow
+
+  function renderFlow(s) {
+    $("flowCollect").textContent = money(s.collect_from_sellers);
+    $("flowGive").textContent = money(s.give_to_clients);
+    $("flowNet").textContent = money(Math.abs(s.net));
+    $("flowNetNote").textContent =
+      s.net >= 0 ? "brokerage you keep" : "short — you pay out more than you collect";
+
+    const extras = [];
+    if (s.collect_from_clients > 0.005)
+      extras.push(`<span><span class="text-emerald-700 font-semibold">${money(s.collect_from_clients)}</span> also to collect from clients</span>`);
+    if (s.give_to_sellers > 0.005)
+      extras.push(`<span><span class="text-rose-700 font-semibold">${money(s.give_to_sellers)}</span> also to give to sell parties</span>`);
+    if (extras.length) {
+      extras.push(`<span class="text-slate-500">Totals: collect ${money(s.collect_total)} · give ${money(s.give_total)}</span>`);
+      $("flowExtras").innerHTML = extras.join("");
+      $("flowExtras").classList.remove("hidden");
+      $("flowExtras").classList.add("flex");
+    } else {
+      $("flowExtras").classList.add("hidden");
+      $("flowExtras").classList.remove("flex");
+    }
+
+    const warn = $("flowWarn");
+    if ((s.sellers || {}).open_count === 0 && (s.buyers || {}).open_count > 0) {
+      warn.innerHTML =
+        "No sell-party outstanding recorded, but clients are. Settlements finalized earlier only posted the buy side —" +
+        (isAdmin ? " click <b>Sync from settlements</b> above." : " ask an admin to run Sync from settlements.");
+      warn.classList.remove("hidden");
+    } else {
+      warn.classList.add("hidden");
+    }
+  }
+
+  async function loadSummary() {
+    const r = await TradeSlip.apiFetch("/api/ipo/ledger/summary");
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+    renderFlow(p);
+  }
+
+  // --------------------------------------------------------- person: list
+
+  const visibleAccounts = () => {
+    const q = state.search.trim().toLowerCase();
+    return state.accounts.filter((a) => !q || (a.name || "").toLowerCase().includes(q));
+  };
+  const isMixed = (a) => a.to_receive > 0.005 && a.to_pay > 0.005;
+
+  function renderAccountRows() {
+    const rows = visibleAccounts();
+    const body = $("accountsBody");
+    const span = isAdmin ? 9 : 8;
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="${span}" class="px-4 py-12 text-center text-slate-400">Nothing outstanding here.</td></tr>`;
       return;
     }
-    renderLedger(payload);
-  });
+    body.innerHTML = rows.map((a) => {
+      const mixed = isMixed(a);
+      const checked = state.selectedAccounts.has(a.account_id) ? "checked" : "";
+      const box = isAdmin
+        ? `<td class="px-3 py-3">${
+            a.open_count === 0 ? ""
+            : mixed ? '<span title="Owes and is owed — open the row" class="text-slate-300">–</span>'
+            : `<input type="checkbox" class="acctBox h-4 w-4 rounded border-slate-300" data-id="${esc(a.account_id)}" ${checked} />`
+          }</td>` : "";
+      return `<tr class="hover:bg-slate-50 ${checked ? "bg-emerald-50/40" : ""}">
+        ${box}
+        <td class="px-3 py-3">
+          <button type="button" class="openAcct text-left font-semibold text-slate-900 hover:text-emerald-800 hover:underline"
+                  data-id="${esc(a.account_id)}" data-type="${esc(a.account_type)}">${esc(a.name)}</button>
+          ${mixed ? '<div class="text-xs text-amber-700">both ways — open to settle</div>' : ""}
+        </td>
+        <td class="px-3 py-3">${sideBadge(a.side)}</td>
+        <td class="px-3 py-3 text-right ${a.open_count ? "font-semibold text-slate-900" : "text-slate-400"}">${a.open_count}</td>
+        <td class="px-3 py-3 text-right ${a.to_receive > 0.005 ? "text-emerald-700 font-medium" : "text-slate-300"}">${money(a.to_receive)}</td>
+        <td class="px-3 py-3 text-right ${a.to_pay > 0.005 ? "text-rose-700 font-medium" : "text-slate-300"}">${money(a.to_pay)}</td>
+        <td class="px-3 py-3 text-right font-bold ${amountClass(a.balance)}">${money(Math.abs(a.balance))}</td>
+        <td class="px-3 py-3 text-slate-500">${esc(a.last_activity || "—")}</td>
+        <td class="px-3 py-3 text-right">
+          <button type="button" class="openAcct rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  data-id="${esc(a.account_id)}" data-type="${esc(a.account_type)}">Open</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
 
-  if (isAdmin) {
-    document.getElementById("payBtn").addEventListener("click", async () => {
-      const body = {
-        party_id: document.getElementById("partySelect").value,
-        entry_type: document.getElementById("payType").value,
-        amount: Number(document.getElementById("payAmt").value),
-        entry_date: document.getElementById("payDate").value,
-        notes: document.getElementById("payNotes").value.trim(),
+  async function loadOverview() {
+    const r = await TradeSlip.apiFetch(
+      `/api/ipo/ledger/overview?side=${encodeURIComponent(state.side)}&include_settled=${state.showSettled}`);
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+    state.accounts = p.accounts || [];
+    const t = p.totals || {};
+    const who = state.side === "seller" ? "sell parties" : state.side === "buyer" ? "clients" : "accounts";
+    $("tabTotal").innerHTML =
+      `${t.account_count || 0} ${who} · ${t.open_count || 0} pending IPO(s) · ` +
+      `<span class="text-emerald-700 font-semibold">${money(t.to_receive)}</span> to receive · ` +
+      `<span class="text-rose-700 font-semibold">${money(t.to_pay)}</span> to pay`;
+    $("overviewExport").href =
+      `/api/ipo/ledger/overview.xlsx?side=${encodeURIComponent(state.side === "all" ? "buyer" : state.side)}&include_settled=${state.showSettled}`;
+    renderAccountRows();
+    syncActionBar();
+    await loadSummary();
+  }
+
+  // ------------------------------------------------------------- person: one
+
+  const openItems = () => {
+    const items = (state.account && state.account.open_items) || [];
+    return state.showDoneItems ? items : items.filter((i) => i.outstanding > 0.005);
+  };
+
+  function renderDetail(data) {
+    state.account = data;
+    state.selectedCharges.clear();
+    const acct = data.account || {};
+    const seller = acct.side === "seller";
+
+    $("detailName").textContent = acct.name || "—";
+    const badge = $("detailSideBadge");
+    badge.textContent = seller ? "Sell party" : "Client";
+    badge.className = `rounded-full px-2 py-0.5 text-xs font-semibold ${
+      seller ? "bg-indigo-100 text-indigo-800" : "bg-emerald-100 text-emerald-800"}`;
+
+    const open = (data.open_items || []).filter((i) => i.outstanding > 0.005).length;
+    $("detailSubtitle").textContent = open ? `${open} IPO${open > 1 ? "s" : ""} still pending` : "Everything settled";
+    $("detailBalance").textContent = money(Math.abs(data.balance));
+    $("detailBalance").className = `text-3xl font-bold ${amountClass(data.balance)}`;
+    const dir = $("detailDirection");
+    dir.textContent = data.balance > 0.005 ? "they owe us" : data.balance < -0.005 ? "we owe them" : "settled";
+    dir.className = `text-sm font-medium ${amountClass(data.balance)}`;
+    $("detailExport").href =
+      `/api/ipo/ledger/${encodeURIComponent(acct.account_id)}/statement.xlsx?account_type=${encodeURIComponent(acct.account_type)}`;
+
+    const note = $("onAccountNote");
+    if (data.on_account > 0.005) {
+      note.textContent = `${money(data.on_account)} of payments is not linked to any IPO yet (paid in advance / on account).`;
+      note.classList.remove("hidden");
+    } else note.classList.add("hidden");
+
+    renderItemRows();
+    renderHistory();
+    state.screen = "person";
+    show("detailView");
+    window.scrollTo(0, 0);
+    syncActionBar();
+  }
+
+  function renderItemRows() {
+    const items = openItems();
+    const body = $("itemsBody");
+    const span = isAdmin ? 7 : 6;
+    if (!items.length) {
+      body.innerHTML = `<tr><td colspan="${span}" class="px-4 py-12 text-center text-slate-400">Nothing pending. Tick “Show settled IPOs” for the history.</td></tr>`;
+      return;
+    }
+    const acct = state.account.account;
+    body.innerHTML = items.map((i) => {
+      const done = i.outstanding <= 0.005;
+      const checked = state.selectedCharges.has(i.id) ? "checked" : "";
+      const box = isAdmin
+        ? `<td class="px-3 py-3">${done ? "" :
+            `<input type="checkbox" class="chargeBox h-4 w-4 rounded border-slate-300" data-id="${esc(i.id)}" ${checked} />`}</td>` : "";
+      const key = `item-${i.id}`;
+      return `<tr class="hover:bg-slate-50 ${checked ? "bg-emerald-50/40" : ""}">
+        ${box}
+        <td class="px-3 py-3">
+          <div class="font-semibold text-slate-900">
+            ${esc(i.ipo_name || (i.entry_type === "Adjustment" ? "Adjustment" : "—"))}
+            ${breakdownBtn(acct.account_type, acct.account_id, i.ipo_id, key)}
+          </div>
+          <div class="text-xs text-slate-500">${esc(i.direction)}${i.notes ? " · " + esc(i.notes) : ""}</div>
+        </td>
+        <td class="px-3 py-3 text-slate-600">${esc((i.entry_date || "").slice(0, 10))}</td>
+        <td class="px-3 py-3 text-right ${amountClass(i.amount)}">${money(Math.abs(i.amount))}</td>
+        <td class="px-3 py-3 text-right text-slate-500">${i.paid > 0.005 ? money(i.paid) : "—"}</td>
+        <td class="px-3 py-3 text-right font-bold ${done ? "text-slate-300" : amountClass(i.amount)}">${money(i.outstanding)}</td>
+        <td class="px-3 py-3">${statusBadge(i.status)}</td>
+      </tr>${breakdownSlot(key, span)}`;
+    }).join("");
+  }
+
+  function renderHistory() {
+    const entries = (state.account && state.account.entries) || [];
+    const span = isAdmin ? 7 : 6;
+    $("historyBody").innerHTML = entries.length
+      ? entries.map((e) => {
+          const editable = isAdmin && e.entry_type !== "Settlement";
+          return `<tr class="hover:bg-slate-50">
+            <td class="px-3 py-2 text-slate-600">${esc((e.entry_date || "").slice(0, 10))}</td>
+            <td class="px-3 py-2 font-medium">${esc(e.entry_type)}</td>
+            <td class="px-3 py-2 text-slate-600">${esc(e.ipo_name || "—")}</td>
+            <td class="px-3 py-2 text-right font-medium ${amountClass(e.amount)}">${money(e.amount)}</td>
+            <td class="px-3 py-2 text-right text-slate-500">${money(e.running_balance)}</td>
+            <td class="px-3 py-2 text-slate-500">${esc(e.notes || "")}</td>
+            ${isAdmin ? `<td class="px-3 py-2 text-right">${
+              editable ? `<button type="button" class="editEntry text-xs font-semibold text-slate-600 hover:text-slate-900 hover:underline" data-id="${esc(e.id)}">Edit</button>`
+                       : '<span class="text-xs text-slate-300" title="Belongs to the settlement">locked</span>'
+            }</td>` : ""}
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="${span}" class="px-4 py-8 text-center text-slate-400">No entries yet.</td></tr>`;
+  }
+
+  async function openAccount(accountId, accountType) {
+    const r = await TradeSlip.apiFetch(
+      `/api/ipo/ledger/account?account_type=${encodeURIComponent(accountType)}&account_id=${encodeURIComponent(accountId)}`);
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+    renderDetail(p);
+  }
+
+  // ------------------------------------------------------------------- IPO
+
+  async function loadIpos() {
+    const r = await TradeSlip.apiFetch("/api/ipo/ledger/ipos");
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+    state.ipos = p.ipos || [];
+    $("ipoListBody").innerHTML = state.ipos.length
+      ? state.ipos.map((i) => `<tr class="hover:bg-slate-50">
+          <td class="px-3 py-3">
+            <button type="button" class="openIpo text-left font-semibold text-slate-900 hover:text-emerald-800 hover:underline" data-id="${esc(i.ipo_id)}">${esc(i.name)}</button>
+          </td>
+          <td class="px-3 py-3 text-slate-500">${esc(i.listing_date || "—")}</td>
+          <td class="px-3 py-3 text-right text-slate-600">${i.party_count}</td>
+          <td class="px-3 py-3 text-right ${i.open_count ? "font-semibold text-amber-700" : "text-slate-300"}">${i.open_count}</td>
+          <td class="px-3 py-3 text-right ${i.collect > 0.005 ? "text-emerald-700 font-medium" : "text-slate-300"}">${money(i.collect)}</td>
+          <td class="px-3 py-3 text-right ${i.give > 0.005 ? "text-rose-700 font-medium" : "text-slate-300"}">${money(i.give)}</td>
+          <td class="px-3 py-3 text-right font-bold ${amountClass(i.net)}">${money(i.net)}</td>
+          <td class="px-3 py-3 text-right">
+            <button type="button" class="openIpo rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100" data-id="${esc(i.ipo_id)}">Open</button>
+          </td>
+        </tr>`).join("")
+      : '<tr><td colspan="8" class="px-4 py-12 text-center text-slate-400">No IPO has any ledger entry yet.</td></tr>';
+  }
+
+  function renderIpoDetail(data) {
+    state.ipo = data;
+    state.selectedCharges.clear();
+    const t = data.totals || {};
+    $("ipoDetailName").textContent = data.ipo.name;
+    $("ipoDetailSub").textContent =
+      `${t.row_count} part${t.row_count === 1 ? "y" : "ies"} · ${t.open_count} still pending` +
+      (data.ipo.listing_date ? ` · listed ${data.ipo.listing_date}` : "");
+    $("ipoCollect").textContent = money(t.collect);
+    $("ipoGive").textContent = money(t.give);
+    $("ipoBrokerage").textContent = money(t.brokerage);
+    renderIpoRows();
+    state.screen = "ipo";
+    show("ipoDetailView");
+    window.scrollTo(0, 0);
+    syncActionBar();
+  }
+
+  function renderIpoRows() {
+    const rows = (state.ipo.rows || []).filter((r) => state.ipoShowDone || r.outstanding > 0.005);
+    const body = $("ipoRowsBody");
+    const span = isAdmin ? 8 : 7;
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="${span}" class="px-4 py-12 text-center text-slate-400">All settled on this IPO.</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows.map((r) => {
+      const done = r.outstanding <= 0.005;
+      const checked = state.selectedCharges.has(r.id) ? "checked" : "";
+      const box = isAdmin
+        ? `<td class="px-3 py-3">${done ? "" :
+            `<input type="checkbox" class="chargeBox h-4 w-4 rounded border-slate-300" data-id="${esc(r.id)}" ${checked} />`}</td>` : "";
+      const key = `ipo-${r.id}`;
+      return `<tr class="hover:bg-slate-50 ${checked ? "bg-emerald-50/40" : ""} ${r.side === "seller" ? "bg-indigo-50/30" : ""}">
+        ${box}
+        <td class="px-3 py-3">
+          <button type="button" class="openAcct text-left font-semibold text-slate-900 hover:text-emerald-800 hover:underline"
+                  data-id="${esc(r.account_id)}" data-type="${esc(r.account_type)}">${esc(r.name)}</button>
+          ${breakdownBtn(r.account_type, r.account_id, r.ipo_id, key)}
+        </td>
+        <td class="px-3 py-3">${sideBadge(r.side)}</td>
+        <td class="px-3 py-3 text-right ${amountClass(r.amount)}">${money(Math.abs(r.amount))}</td>
+        <td class="px-3 py-3 text-right text-slate-500">${r.paid > 0.005 ? money(r.paid) : "—"}</td>
+        <td class="px-3 py-3 text-right font-bold ${done ? "text-slate-300" : amountClass(r.amount)}">${money(r.outstanding)}</td>
+        <td class="px-3 py-3">${statusBadge(r.status)}</td>
+        <td class="px-3 py-3 text-right">
+          <button type="button" class="openAcct rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  data-id="${esc(r.account_id)}" data-type="${esc(r.account_type)}">Open</button>
+        </td>
+      </tr>${breakdownSlot(key, span)}`;
+    }).join("");
+  }
+
+  async function openIpo(ipoId) {
+    const r = await TradeSlip.apiFetch(`/api/ipo/ledger/by-ipo?ipo_id=${encodeURIComponent(ipoId)}`);
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+    renderIpoDetail(p);
+  }
+
+  // ------------------------------------------------------------ action bar
+
+  // Which table the ticked rows live in — driven by what is on screen, not by
+  // which list you arrived from (you can open a person from inside an IPO).
+  function chargeSource() {
+    if (state.screen === "ipo") return (state.ipo && state.ipo.rows) || [];
+    if (state.screen === "person") return (state.account && state.account.open_items) || [];
+    return [];
+  }
+
+  function selectionTotals() {
+    if (state.screen !== "list") {
+      const picked = chargeSource().filter((c) => state.selectedCharges.has(c.id));
+      const accounts = new Set(picked.map((c) => c.account_id || (state.account && state.account.account.account_id)));
+      return {
+        count: picked.length,
+        receive: picked.filter((c) => c.amount > 0).reduce((s, c) => s + c.outstanding, 0),
+        pay: picked.filter((c) => c.amount < 0).reduce((s, c) => s + c.outstanding, 0),
+        label: "row",
+        accounts: accounts.size,
       };
-      const response = await TradeSlip.apiFetch("/api/ipo/ledger/payments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        alert(TradeSlip.parseErrorDetail(payload));
-        return;
+    }
+    const accts = state.accounts.filter((a) => state.selectedAccounts.has(a.account_id));
+    return {
+      count: accts.length,
+      receive: accts.reduce((s, a) => s + a.to_receive, 0),
+      pay: accts.reduce((s, a) => s + a.to_pay, 0),
+      label: "account",
+      accounts: accts.length,
+    };
+  }
+
+  function syncActionBar() {
+    if (!isAdmin) return;
+    const bar = $("actionBar");
+    const t = selectionTotals();
+    if (!t.count) { bar.classList.add("hidden"); return; }
+    bar.classList.remove("hidden");
+    $("barCount").textContent = `${t.count} ${t.label}${t.count > 1 ? "s" : ""} selected`;
+
+    const mixed = t.receive > 0.005 && t.pay > 0.005;
+    const total = t.receive > 0.005 ? t.receive : t.pay;
+    const el = $("barTotal");
+    if (mixed) {
+      el.innerHTML = '<span class="text-rose-700 font-semibold">Mixed directions — deselect one side.</span>';
+    } else {
+      el.innerHTML = (t.receive > 0.005
+        ? `<span class="text-emerald-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to collect</span>`
+        : `<span class="text-rose-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to give</span>`)
+        + (t.accounts > 1 ? ` <span class="text-slate-400">· across ${t.accounts} accounts</span>` : "");
+    }
+
+    // A part-payment can only be split sensibly against a single account.
+    const onePerson = state.screen !== "list" && t.accounts === 1;
+    $("barAmountWrap").classList.toggle("hidden", !onePerson);
+    if (onePerson && !mixed) $("barAmount").value = total.toFixed(2);
+    $("barSubmit").disabled = mixed;
+    $("barSubmit").classList.toggle("opacity-40", mixed);
+  }
+
+  function repaintCurrent() {
+    if (state.screen === "ipo") renderIpoRows();
+    else if (state.screen === "person") renderItemRows();
+    else renderAccountRows();
+  }
+
+  function clearSelection() {
+    state.selectedAccounts.clear();
+    state.selectedCharges.clear();
+    ["selectAllAccounts", "selectAllItems", "selectAllIpoRows"].forEach((id) => {
+      const el = $(id); if (el) el.checked = false;
+    });
+    repaintCurrent();
+    syncActionBar();
+  }
+
+  async function submitPayment(btn) {
+    const entry_date = $("barDate").value || TradeSlip.todayIso();
+    const notes = $("barNotes").value.trim();
+    const stop = TradeSlip.beginButtonLoading(btn, { label: "Saving…" });
+    try {
+      const t = selectionTotals();
+      if (state.screen !== "list") {
+        const picked = chargeSource().filter((c) => state.selectedCharges.has(c.id));
+        // Group by account so one click can settle a whole IPO across many parties.
+        const byAccount = new Map();
+        picked.forEach((c) => {
+          const key = c.account_type
+            ? `${c.account_type}:${c.account_id}`
+            : `${state.account.account.account_type}:${state.account.account.account_id}`;
+          if (!byAccount.has(key)) byAccount.set(key, []);
+          byAccount.get(key).push(c.id);
+        });
+
+        if (byAccount.size === 1) {
+          const [key, ids] = byAccount.entries().next().value;
+          const [account_type, account_id] = key.split(":");
+          const body = { account_type, account_id, charge_ids: ids, entry_date, notes };
+          const typed = Number($("barAmount").value);
+          const total = t.receive > 0.005 ? t.receive : t.pay;
+          if (typed > 0 && Math.abs(typed - total) > 0.005) body.amount = typed;
+          const r = await TradeSlip.apiFetch("/api/ipo/ledger/settle", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+          });
+          const p = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        } else {
+          const payments = Array.from(byAccount.entries()).map(([key, ids]) => {
+            const [account_type, account_id] = key.split(":");
+            return { account_type, account_id, charge_ids: ids };
+          });
+          const r = await TradeSlip.apiFetch("/api/ipo/ledger/settle-batch", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payments, entry_date, notes }),
+          });
+          const p = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+          if ((p.failed || []).length)
+            alert(`Settled ${(p.settled || []).length}. ${p.failed.length} failed:\n` +
+                  p.failed.map((f) => "• " + f.error).join("\n"));
+        }
+        $("barNotes").value = "";
+        state.selectedCharges.clear();
+        if (state.screen === "ipo") await openIpo(state.ipo.ipo.id);
+        else await openAccount(state.account.account.account_id, state.account.account.account_type);
+      } else {
+        const payments = state.accounts
+          .filter((a) => state.selectedAccounts.has(a.account_id))
+          .map((a) => ({ account_type: a.account_type, account_id: a.account_id, charge_ids: [] }));
+        const r = await TradeSlip.apiFetch("/api/ipo/ledger/settle-batch", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ payments, entry_date, notes }),
+        });
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        if ((p.failed || []).length)
+          alert(`Settled ${(p.settled || []).length}. ${p.failed.length} failed:\n` +
+                p.failed.map((f) => "• " + f.error).join("\n"));
+        $("barNotes").value = "";
+        state.selectedAccounts.clear();
+        await loadOverview();
       }
-      document.getElementById("payAmt").value = "";
-      renderLedger(payload);
+      await loadSummary();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      stop();
+      syncActionBar();
+    }
+  }
+
+  // ---------------------------------------------------------------- modals
+
+  function openModal(id) { $(id).classList.remove("hidden"); }
+  function closeModal(id) { $(id).classList.add("hidden"); }
+
+  function openEdit(entryId) {
+    const entry = (state.account.entries || []).find((e) => e.id === entryId);
+    if (!entry) return;
+    state.editing = entry;
+    $("editSubtitle").textContent =
+      `${entry.entry_type} · ${(entry.entry_date || "").slice(0, 10)}${entry.ipo_name ? " · " + entry.ipo_name : ""}`;
+    $("editAmount").value = Math.abs(entry.amount).toFixed(2);
+    $("editDate").value = (entry.entry_date || "").slice(0, 10);
+    $("editNotes").value = entry.notes || "";
+    $("editAmountHint").textContent = entry.entry_type === "Adjustment"
+      ? "Direction stays the same; only the size changes."
+      : "Changing this re-spreads the payment across the pending IPOs.";
+    openModal("editModal");
+  }
+
+  // ------------------------------------------------------------- listeners
+
+  function paintViewTabs() {
+    document.querySelectorAll(".viewTab").forEach((tab) => {
+      const active = tab.dataset.view === state.view;
+      tab.className = `viewTab rounded-md px-4 py-1.5 text-sm font-semibold ${
+        active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`;
     });
   }
 
-  loadParties().catch((e) => alert(e.message));
+  function paintSideTabs() {
+    document.querySelectorAll(".sideTab").forEach((tab) => {
+      const active = tab.dataset.side === state.side;
+      tab.className = `sideTab rounded-t-lg px-4 py-2 text-sm font-semibold ${
+        active ? "bg-white text-emerald-800 border border-b-white border-slate-200 -mb-px"
+               : "text-slate-500 hover:text-slate-800"}`;
+    });
+  }
+
+  document.querySelectorAll(".viewTab").forEach((tab) => {
+    tab.addEventListener("click", async () => {
+      state.view = tab.dataset.view;
+      state.screen = "list";
+      clearSelection();
+      paintViewTabs();
+      try {
+        if (state.view === "ipo") { show("ipoView"); await loadIpos(); }
+        else { show("personView"); await loadOverview(); }
+      } catch (e) { alert(e.message); }
+    });
+  });
+
+  document.querySelectorAll(".sideTab").forEach((tab) => {
+    tab.addEventListener("click", async () => {
+      state.side = tab.dataset.side;
+      state.selectedAccounts.clear();
+      paintSideTabs();
+      try { await loadOverview(); } catch (e) { alert(e.message); }
+    });
+  });
+
+  $("searchBox").addEventListener("input", (e) => { state.search = e.target.value; renderAccountRows(); });
+  $("showSettled").addEventListener("change", async (e) => {
+    state.showSettled = e.target.checked;
+    try { await loadOverview(); } catch (err) { alert(err.message); }
+  });
+  $("showDoneItems").addEventListener("change", (e) => { state.showDoneItems = e.target.checked; renderItemRows(); });
+  $("ipoShowDone").addEventListener("change", (e) => { state.ipoShowDone = e.target.checked; renderIpoRows(); });
+
+  $("backBtn").addEventListener("click", async () => {
+    clearSelection();
+    if (state.view === "ipo" && state.ipo) { await openIpo(state.ipo.ipo.id); }
+    else { state.screen = "list"; show("personView"); await loadOverview(); }
+  });
+  $("ipoBackBtn").addEventListener("click", async () => {
+    clearSelection();
+    state.screen = "list";
+    show("ipoView");
+    try { await loadIpos(); } catch (e) { alert(e.message); }
+  });
+
+  // Delegated: works across every table on the page.
+  document.addEventListener("click", async (e) => {
+    const acct = e.target.closest(".openAcct");
+    if (acct) { try { await openAccount(acct.dataset.id, acct.dataset.type); } catch (err) { alert(err.message); } return; }
+    const ipo = e.target.closest(".openIpo");
+    if (ipo) { try { await openIpo(ipo.dataset.id); } catch (err) { alert(err.message); } return; }
+    const bd = e.target.closest(".bdBtn");
+    if (bd) { await toggleBreakdown(bd); return; }
+    const edit = e.target.closest(".editEntry");
+    if (edit) { openEdit(edit.dataset.id); return; }
+    const close = e.target.closest("[data-close]");
+    if (close) closeModal(close.dataset.close);
+  });
+
+  document.addEventListener("change", (e) => {
+    const acctBox = e.target.closest(".acctBox");
+    if (acctBox) {
+      if (acctBox.checked) state.selectedAccounts.add(acctBox.dataset.id);
+      else state.selectedAccounts.delete(acctBox.dataset.id);
+      renderAccountRows(); syncActionBar(); return;
+    }
+    const chargeBox = e.target.closest(".chargeBox");
+    if (chargeBox) {
+      const row = chargeSource().find((c) => c.id === chargeBox.dataset.id);
+      if (chargeBox.checked && row) state.selectedCharges.set(row.id, row);
+      else state.selectedCharges.delete(chargeBox.dataset.id);
+      repaintCurrent(); syncActionBar();
+    }
+  });
+
+  if (isAdmin) {
+    $("selectAllAccounts").addEventListener("change", (e) => {
+      state.selectedAccounts.clear();
+      if (e.target.checked)
+        visibleAccounts().filter((a) => a.open_count > 0 && !isMixed(a))
+          .forEach((a) => state.selectedAccounts.add(a.account_id));
+      renderAccountRows(); syncActionBar();
+    });
+    $("selectAllItems").addEventListener("change", (e) => {
+      state.selectedCharges.clear();
+      if (e.target.checked)
+        openItems().filter((i) => i.outstanding > 0.005).forEach((i) => state.selectedCharges.set(i.id, i));
+      renderItemRows(); syncActionBar();
+    });
+    $("selectAllIpoRows").addEventListener("change", (e) => {
+      state.selectedCharges.clear();
+      if (e.target.checked)
+        (state.ipo.rows || []).filter((r) => r.outstanding > 0.005)
+          .forEach((r) => state.selectedCharges.set(r.id, r));
+      renderIpoRows(); syncActionBar();
+    });
+
+    $("barClear").addEventListener("click", clearSelection);
+    $("barSubmit").addEventListener("click", (e) => submitPayment(e.currentTarget));
+    $("barDate").value = TradeSlip.todayIso();
+
+    $("addAdjustBtn").addEventListener("click", () => {
+      $("adjAmount").value = "";
+      $("adjNotes").value = "";
+      $("adjDate").value = TradeSlip.todayIso();
+      openModal("adjustModal");
+    });
+
+    $("adjSave").addEventListener("click", async (e) => {
+      const magnitude = Number($("adjAmount").value);
+      const notes = $("adjNotes").value.trim();
+      if (!(magnitude > 0)) return alert("Enter an amount.");
+      if (!notes) return alert("Write a short reason — this is a manual entry.");
+      const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Saving…" });
+      try {
+        const acct = state.account.account;
+        const r = await TradeSlip.apiFetch("/api/ipo/ledger/adjustments", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            account_type: acct.account_type,
+            account_id: acct.account_id,
+            amount: $("adjDirection").value === "receive" ? magnitude : -magnitude,
+            entry_date: $("adjDate").value || TradeSlip.todayIso(),
+            notes,
+          }),
+        });
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        closeModal("adjustModal");
+        renderDetail(p);
+        await loadSummary();
+      } catch (err) { alert(err.message); } finally { stop(); }
+    });
+
+    $("editSave").addEventListener("click", async (e) => {
+      const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Saving…" });
+      try {
+        const r = await TradeSlip.apiFetch(`/api/ipo/ledger/entries/${encodeURIComponent(state.editing.id)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: Number($("editAmount").value) || undefined,
+            entry_date: $("editDate").value || undefined,
+            notes: $("editNotes").value,
+          }),
+        });
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        closeModal("editModal");
+        renderDetail(p);
+        await loadSummary();
+      } catch (err) { alert(err.message); } finally { stop(); }
+    });
+
+    $("editDelete").addEventListener("click", async (e) => {
+      const entry = state.editing;
+      if (!confirm(`Delete this ${entry.entry_type} of ${money(Math.abs(entry.amount))}?\n\n` +
+                   "Whatever it paid off becomes pending again.")) return;
+      const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Deleting…" });
+      try {
+        const r = await TradeSlip.apiFetch(`/api/ipo/ledger/entries/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        closeModal("editModal");
+        renderDetail(p);
+        await loadSummary();
+      } catch (err) { alert(err.message); } finally { stop(); }
+    });
+
+    $("syncBtn").addEventListener("click", async (e) => {
+      const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Syncing…" });
+      try {
+        const r = await TradeSlip.apiFetch("/api/ipo/ledger/sync", { method: "POST" });
+        const p = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
+        if (state.view === "ipo") await loadIpos(); else await loadOverview();
+        await loadSummary();
+        alert(p.entries_created
+          ? `Added ${p.entries_created} missing ledger entr${p.entries_created > 1 ? "ies" : "y"} from ${p.settlements_checked} finalized settlement(s).`
+          : `Nothing missing — ${p.settlements_checked} finalized settlement(s) already posted.`);
+      } catch (err) { alert(err.message); } finally { stop(); }
+    });
+  }
+
+  paintViewTabs();
+  paintSideTabs();
+  loadOverview().catch((e) => alert(e.message));
+})();
 </script>
 {% endblock %}

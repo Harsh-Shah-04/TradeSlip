@@ -126,7 +126,11 @@ class SettlementCreateRequest(BaseModel):
 
 
 class LedgerPaymentRequest(BaseModel):
-    party_id: str = Field(min_length=1)
+    """On-account payment. Auto-clears the oldest matching charges."""
+
+    party_id: str | None = None
+    account_type: str = Field(default="party")
+    account_id: str | None = None
     entry_type: str = Field(min_length=1)
     amount: float = Field(gt=0)
     entry_date: str = Field(min_length=10, max_length=10)
@@ -139,6 +143,95 @@ class LedgerPaymentRequest(BaseModel):
         if value not in ("PaymentReceived", "PaymentPaid"):
             raise ValueError("entry_type must be PaymentReceived or PaymentPaid")
         return value
+
+    @field_validator("account_type")
+    @classmethod
+    def validate_account_type(cls, value: str) -> str:
+        if value not in ("party", "sell_party"):
+            raise ValueError("account_type must be party or sell_party")
+        return value
+
+    @model_validator(mode="after")
+    def require_account(self) -> "LedgerPaymentRequest":
+        if not (self.account_id or self.party_id):
+            raise ValueError("account_id is required")
+        return self
+
+    @property
+    def target_id(self) -> str:
+        return str(self.account_id or self.party_id)
+
+
+class LedgerSettleRequest(BaseModel):
+    """Tick some IPO charges on one account and clear them with one payment."""
+
+    account_type: str = Field(default="party")
+    account_id: str = Field(min_length=1)
+    charge_ids: list[str] = Field(min_length=1)
+    entry_date: str = Field(min_length=10, max_length=10)
+    amount: float | None = Field(default=None, gt=0)
+    notes: str = Field(default="", max_length=2000)
+
+    @field_validator("account_type")
+    @classmethod
+    def validate_account_type(cls, value: str) -> str:
+        if value not in ("party", "sell_party"):
+            raise ValueError("account_type must be party or sell_party")
+        return value
+
+
+class LedgerAdjustmentRequest(BaseModel):
+    """Manual charge — carry-forward opening balance, write-off, discount, fix."""
+
+    account_type: str = Field(default="party")
+    account_id: str = Field(min_length=1)
+    amount: float
+    entry_date: str = Field(min_length=10, max_length=10)
+    notes: str = Field(min_length=1, max_length=2000)
+    ipo_id: str | None = None
+
+    @field_validator("account_type")
+    @classmethod
+    def validate_account_type(cls, value: str) -> str:
+        if value not in ("party", "sell_party"):
+            raise ValueError("account_type must be party or sell_party")
+        return value
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, value: float) -> float:
+        if abs(value) < 0.005:
+            raise ValueError("amount must not be zero")
+        return value
+
+
+class LedgerEntryUpdate(BaseModel):
+    entry_date: str | None = Field(default=None, min_length=10, max_length=10)
+    notes: str | None = Field(default=None, max_length=2000)
+    amount: float | None = None
+
+
+class LedgerBatchItem(BaseModel):
+    account_type: str = Field(default="party")
+    account_id: str = Field(min_length=1)
+    charge_ids: list[str] = Field(default_factory=list)
+    amount: float | None = Field(default=None, gt=0)
+    notes: str = Field(default="", max_length=2000)
+
+    @field_validator("account_type")
+    @classmethod
+    def validate_account_type(cls, value: str) -> str:
+        if value not in ("party", "sell_party"):
+            raise ValueError("account_type must be party or sell_party")
+        return value
+
+
+class LedgerBatchSettleRequest(BaseModel):
+    """Settle several accounts at once from the overview checkboxes."""
+
+    payments: list[LedgerBatchItem] = Field(min_length=1)
+    entry_date: str = Field(min_length=10, max_length=10)
+    notes: str = Field(default="", max_length=2000)
 
 
 class PartyCreate(BaseModel):
@@ -575,6 +668,9 @@ def ledger_entry_to_json(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row.get("id") or ""),
         "party_id": str(row.get("party_id") or ""),
+        "sell_party_id": (
+            None if row.get("sell_party_id") is None else str(row.get("sell_party_id"))
+        ),
         "ipo_id": None if row.get("ipo_id") is None else str(row.get("ipo_id")),
         "entry_type": row.get("entry_type"),
         "amount": float(row.get("amount") or 0),

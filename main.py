@@ -47,7 +47,11 @@ from utils.ipo.models import (
     CommonListingPriceRequest,
     IpoMasterCreate,
     IpoMasterUpdate,
+    LedgerAdjustmentRequest,
+    LedgerBatchSettleRequest,
+    LedgerEntryUpdate,
     LedgerPaymentRequest,
+    LedgerSettleRequest,
     MarkSoldRequest,
     MarkSoldRowRequest,
     MarkSoldSelectedRequest,
@@ -80,6 +84,7 @@ from utils.ipo.sell_parties import (
     archive_sell_party,
     create_sell_party,
     delete_sell_party,
+    get_sell_party,
     list_sell_parties,
     update_sell_party,
 )
@@ -104,15 +109,28 @@ from utils.ipo.allotments import (
 )
 from utils.ipo.settlement import (
     build_settlement_excel,
+    charge_breakdown,
     create_or_refresh_draft,
     finalize_settlement,
     get_settlement,
     preview_settlement,
+    sync_finalized_settlement_ledger,
 )
 from utils.ipo.ledger import (
+    account_ledger,
+    add_adjustment,
+    build_overview_excel,
     build_statement_excel,
+    delete_ledger_entry,
+    ipos_with_ledger,
+    ledger_by_ipo,
+    ledger_overview,
+    ledger_summary,
     list_ledger,
+    pay_open_items,
+    pay_open_items_batch,
     record_payment,
+    update_ledger_entry,
 )
 from utils.ipo.service import (
     archive_ipo,
@@ -2113,10 +2131,197 @@ async def ipo_settlement_export(admin: AdminAuth, settlement_id: str) -> Streami
     )
 
 
+@app.get("/api/ipo/ledger/summary")
+async def ipo_ledger_summary(broker: BrokerAuth) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(ledger_summary)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/ledger/sync")
+async def ipo_ledger_sync(admin: AdminAuth, ipo_id: str | None = Query(None)) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(sync_finalized_settlement_ledger, ipo_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/ledger/ipos")
+async def ipo_ledger_ipos(broker: BrokerAuth) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(ipos_with_ledger)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content={"ipos": result})
+
+
+@app.get("/api/ipo/ledger/by-ipo")
+async def ipo_ledger_by_ipo(broker: BrokerAuth, ipo_id: str = Query(...)) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(ledger_by_ipo, ipo_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/ledger/breakdown")
+async def ipo_ledger_breakdown(
+    broker: BrokerAuth,
+    account_id: str = Query(...),
+    ipo_id: str = Query(...),
+    account_type: str = Query("party"),
+) -> JSONResponse:
+    """Behind one ledger charge: which counterparties fund it, account by account."""
+    try:
+        if account_type == "sell_party":
+            name = (await asyncio.to_thread(get_sell_party, account_id)).get("name") or ""
+        else:
+            name = (
+                await asyncio.to_thread(get_party, account_id, include_applicant_count=False)
+            ).get("name") or ""
+        result = await asyncio.to_thread(
+            charge_breakdown,
+            account_type=account_type,
+            account_id=account_id,
+            account_name=name,
+            ipo_id=ipo_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/ledger/adjustments")
+async def ipo_ledger_adjustment(
+    admin: AdminAuth, payload: LedgerAdjustmentRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            add_adjustment,
+            account_type=payload.account_type,
+            account_id=payload.account_id,
+            amount=payload.amount,
+            entry_date=payload.entry_date,
+            notes=payload.notes,
+            ipo_id=payload.ipo_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.patch("/api/ipo/ledger/entries/{entry_id}")
+async def ipo_ledger_entry_update(
+    admin: AdminAuth, entry_id: str, payload: LedgerEntryUpdate
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            update_ledger_entry,
+            entry_id,
+            entry_date=payload.entry_date,
+            notes=payload.notes,
+            amount=payload.amount,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.delete("/api/ipo/ledger/entries/{entry_id}")
+async def ipo_ledger_entry_delete(admin: AdminAuth, entry_id: str) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(delete_ledger_entry, entry_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/ledger/overview")
+async def ipo_ledger_overview(
+    broker: BrokerAuth,
+    side: str = Query("buyer"),
+    include_settled: bool = Query(False),
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            ledger_overview, side, include_settled=include_settled
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.get("/api/ipo/ledger/account")
+async def ipo_ledger_account(
+    broker: BrokerAuth,
+    account_id: str = Query(...),
+    account_type: str = Query("party"),
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(account_ledger, account_type, account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
 @app.get("/api/ipo/ledger")
 async def ipo_get_ledger(broker: BrokerAuth, party_id: str = Query(...)) -> JSONResponse:
     try:
         result = await asyncio.to_thread(list_ledger, party_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/ledger/settle")
+async def ipo_ledger_settle(admin: AdminAuth, payload: LedgerSettleRequest) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            pay_open_items,
+            account_type=payload.account_type,
+            account_id=payload.account_id,
+            charge_ids=payload.charge_ids,
+            entry_date=payload.entry_date,
+            amount=payload.amount,
+            notes=payload.notes or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/ledger/settle-batch")
+async def ipo_ledger_settle_batch(
+    admin: AdminAuth, payload: LedgerBatchSettleRequest
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(
+            pay_open_items_batch,
+            payments=[item.model_dump() for item in payload.payments],
+            entry_date=payload.entry_date,
+            notes=payload.notes or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse(content=result)
@@ -2127,7 +2332,8 @@ async def ipo_ledger_payment(admin: AdminAuth, payload: LedgerPaymentRequest) ->
     try:
         result = await asyncio.to_thread(
             record_payment,
-            party_id=payload.party_id,
+            account_type=payload.account_type,
+            account_id=payload.target_id,
             entry_type=payload.entry_type,
             amount=payload.amount,
             entry_date=payload.entry_date,
@@ -2141,12 +2347,41 @@ async def ipo_ledger_payment(admin: AdminAuth, payload: LedgerPaymentRequest) ->
     return JSONResponse(content=result)
 
 
-@app.get("/api/ipo/ledger/{party_id}/statement.xlsx")
-async def ipo_ledger_statement(broker: BrokerAuth, party_id: str) -> StreamingResponse:
+@app.get("/api/ipo/ledger/overview.xlsx")
+async def ipo_ledger_overview_export(
+    broker: BrokerAuth,
+    side: str = Query("buyer"),
+    include_settled: bool = Query(False),
+) -> StreamingResponse:
     try:
-        party = await asyncio.to_thread(get_party, party_id, include_applicant_count=False)
-        name = party.get("name") or "Client"
-        xlsx_bytes = await asyncio.to_thread(build_statement_excel, party_id, name)
+        xlsx_bytes = await asyncio.to_thread(
+            build_overview_excel, side, include_settled=include_settled
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    stream = io.BytesIO(xlsx_bytes)
+    stream.seek(0)
+    label = "Sellers" if side.startswith("sell") else "Clients"
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Outstanding_{label}.xlsx"'},
+    )
+
+
+@app.get("/api/ipo/ledger/{party_id}/statement.xlsx")
+async def ipo_ledger_statement(
+    broker: BrokerAuth, party_id: str, account_type: str = Query("party")
+) -> StreamingResponse:
+    try:
+        if account_type == "sell_party":
+            name = (await asyncio.to_thread(get_sell_party, party_id)).get("name") or "Sell party"
+        else:
+            party = await asyncio.to_thread(get_party, party_id, include_applicant_count=False)
+            name = party.get("name") or "Client"
+        xlsx_bytes = await asyncio.to_thread(
+            build_statement_excel, party_id, name, account_type
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
