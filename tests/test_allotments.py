@@ -11,6 +11,7 @@ from utils.ipo.settlement import (
     _attribute_allotment_rows,
     _direction,
     _party_summary,
+    _sell_side_financials,
     _sell_side_direction,
 )
 
@@ -139,6 +140,39 @@ def test_sell_side_direction_inverted():
     assert _sell_side_direction(-164) == "Receivable"
     assert _sell_side_direction(0) == "Settled"
     assert _direction(1536) == "Receivable"
+
+
+def test_application_sell_side_uses_seller_vyaj_and_separate_brokerage():
+    amounts = _sell_side_financials(
+        listing_sell_amt=2043.6,
+        seller_vyaj=3600,
+        buyer_vyaj=3300,
+        recorded_brokerage=300,
+        premium=False,
+    )
+    assert amounts == {
+        "sell_amt": 2043.6,
+        "vyaj": 3600.0,
+        "brokerage": 300.0,
+        "net_pl": -1556.4,
+    }
+
+
+def test_premium_sell_side_is_receivable_from_sell_party():
+    amounts = _sell_side_financials(
+        listing_sell_amt=0,
+        seller_vyaj=3990,
+        buyer_vyaj=3610,
+        recorded_brokerage=380,
+        premium=True,
+    )
+    assert amounts == {
+        "sell_amt": 0.0,
+        "vyaj": 3990.0,
+        "brokerage": 380.0,
+        "net_pl": -3990.0,
+    }
+    assert _sell_side_direction(amounts["net_pl"]) == "Receivable"
 
 
 def test_effective_price_common_over_none_override():
