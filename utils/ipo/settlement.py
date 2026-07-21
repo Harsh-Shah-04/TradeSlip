@@ -59,6 +59,36 @@ def _sell_side_direction(net_pl: float) -> str:
     return "Payable" if net_pl > 0 else "Receivable"
 
 
+def _sell_side_financials(
+    *,
+    listing_sell_amt: float,
+    seller_vyaj: float,
+    buyer_vyaj: float,
+    recorded_brokerage: float | None,
+    premium: bool,
+) -> dict[str, float]:
+    """Return sell-party settlement amounts without mixing buyer cost and brokerage."""
+    brokerage = (
+        float(_money(recorded_brokerage))
+        if recorded_brokerage is not None
+        else float(_money(seller_vyaj) - _money(buyer_vyaj))
+    )
+    if premium:
+        # Premium has no listing-sale leg: the sell party owes the full trade amount.
+        return {
+            "sell_amt": 0.0,
+            "vyaj": float(_money(seller_vyaj)),
+            "brokerage": brokerage,
+            "net_pl": float(-_money(seller_vyaj)),
+        }
+    return {
+        "sell_amt": float(_money(listing_sell_amt)),
+        "vyaj": float(_money(seller_vyaj)),
+        "brokerage": brokerage,
+        "net_pl": float(_money(listing_sell_amt) - _money(seller_vyaj)),
+    }
+
+
 def _build_line_from_allotment(row: dict[str, Any], ipo: dict[str, Any]) -> dict[str, Any]:
     applicant = row.get("ipo_applicants") if isinstance(row.get("ipo_applicants"), dict) else {}
     party = applicant.get("ipo_parties") if isinstance(applicant.get("ipo_parties"), dict) else {}
@@ -91,6 +121,8 @@ def _build_line_from_allotment(row: dict[str, Any], ipo: dict[str, Any]) -> dict
         "direction": _direction(net_pl),
         "status": status,
         "is_sold": bool(row.get("is_sold")),
+        "is_premium": False,
+        "line_type": "Application",
     }
 
 
@@ -160,8 +192,89 @@ def _sell_party_summary_bucket(*, sell_party: str = "", is_premium_row: bool = F
         "shares_allotted": 0,
         "sell_amt": 0.0,
         "vyaj": 0.0,
+        "brokerage": 0.0,
         "net_pl": 0.0,
     }
+
+
+def _party_ids_by_name(names: list[str]) -> dict[str, str]:
+    """Resolve Client Master party ids for position party names (best effort)."""
+    cleaned = sorted({n.strip() for n in names if n and n.strip()})
+    if not cleaned:
+        return {}
+    quoted = ",".join('"' + n.replace('"', '""') + '"' for n in cleaned)
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/ipo_parties",
+        headers=_service_headers(),
+        params={"select": "id,name", "name": f"in.({quoted})", "limit": "2000"},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        return {}
+    out: dict[str, str] = {}
+    for row in response.json() or []:
+        name = str(row.get("name") or "").strip()
+        if name and row.get("id"):
+            out[name.casefold()] = str(row["id"])
+    return out
+
+
+def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
+    """Premium positions owe the buy party the full buy amount (no listing leg)."""
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/ipo_positions",
+        headers=_service_headers(),
+        params={
+            "select": "id,party,category,buy_app,buy_amt",
+            "ipo_id": f"eq.{ipo_id}",
+            "limit": "5000",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        return []
+    premium_positions = [
+        r for r in (response.json() or []) if is_premium(r.get("category"))
+    ]
+    if not premium_positions:
+        return []
+    party_ids = _party_ids_by_name([str(r.get("party") or "") for r in premium_positions])
+    lines: list[dict[str, Any]] = []
+    for pos in premium_positions:
+        party = str(pos.get("party") or "").strip() or "—"
+        buy_amt = float(_money(pos.get("buy_amt")))
+        shares = int(round(float(pos.get("buy_app") or 0)))
+        net_pl = float(-_money(buy_amt))
+        lines.append(
+            {
+                "allotment_id": None,
+                "party_id": party_ids.get(party.casefold()),
+                "applicant_id": None,
+                "position_id": str(pos.get("id") or "") or None,
+                "party_name": party,
+                "applicant_name": "Premium shares",
+                "pan": "",
+                "dpid": "",
+                "sub_category": pos.get("category") or "Premium",
+                "application_amount": None,
+                "vyaj": buy_amt,
+                # Premium is share-qty, not IPO applications — mirror sell-side Applied.
+                "applied": float(shares),
+                "allotted_apps": 0.0,
+                "shares_allotted": shares,
+                "sell_premium": 0.0,
+                # No listing-sale leg with the buy party; grey-market sell is Ambica's side.
+                "sell_amt": 0.0,
+                "net_pl": net_pl,
+                "direction": _direction(net_pl),
+                "status": "Premium",
+                "is_sold": True,
+                "is_premium": True,
+                "line_type": "Premium",
+            }
+        )
+    lines.sort(key=lambda l: (l["party_name"].lower(), l["position_id"] or ""))
+    return lines
 
 
 def _party_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -179,6 +292,8 @@ def _party_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "sell_amt": 0.0,
                 "vyaj": 0.0,
                 "net_pl": 0.0,
+                "has_premium": False,
+                "has_application": False,
             },
         )
         bucket["applied"] += float(line.get("applied") or 0)
@@ -187,14 +302,27 @@ def _party_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         bucket["sell_amt"] += float(line.get("sell_amt") or 0)
         bucket["vyaj"] += float(line.get("vyaj") or 0)
         bucket["net_pl"] += float(line.get("net_pl") or 0)
+        if line.get("is_premium") or line.get("line_type") == "Premium":
+            bucket["has_premium"] = True
+        else:
+            bucket["has_application"] = True
     result = []
     for bucket in by_party.values():
         bucket["direction"] = _direction(bucket["net_pl"])
         # average sell premium for display when shares > 0
-        if bucket["shares_allotted"] > 0:
+        if bucket["shares_allotted"] > 0 and bucket["sell_amt"]:
             bucket["sell_premium"] = bucket["sell_amt"] / bucket["shares_allotted"]
         else:
             bucket["sell_premium"] = 0.0
+        if bucket["has_premium"] and not bucket["has_application"]:
+            bucket["line_type"] = "Premium"
+            bucket["is_premium"] = True
+        elif bucket["has_application"] and not bucket["has_premium"]:
+            bucket["line_type"] = "Application"
+            bucket["is_premium"] = False
+        else:
+            bucket["line_type"] = "Mixed"
+            bucket["is_premium"] = False
         result.append(bucket)
     result.sort(key=lambda x: (x.get("party_name") or "").lower())
     return result
@@ -237,7 +365,10 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
             f"{_supabase_url()}/rest/v1/ipo_sells",
             headers=_service_headers(),
             params={
-                "select": "id,position_id,sell_date,sell_app,sell_rate,sell_amt,sell_party",
+                "select": (
+                    "id,position_id,sell_date,sell_app,sell_rate,"
+                    "sell_amt,sell_party,brokerage"
+                ),
                 "position_id": f"in.{id_filter}",
                 "order": "sell_date.asc",
                 "limit": "5000",
@@ -255,15 +386,20 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
             sell_party = (s.get("sell_party") or "").strip() or "—"
             premium = is_premium(pos.get("category"))
             grey_sell_amt = float(_money(s.get("sell_amt")))
+            buyer_vyaj = float(_money(sell_qty) * _money(buy_rate))
+            recorded_brokerage = s.get("brokerage")
 
             if premium:
-                # Premium = share lots — not IPO applications / allotments.
-                vyaj = float(_money(sell_qty) * _money(buy_rate))
-                sell_amt = grey_sell_amt
-                net_pl = float(_money(sell_amt) - _money(vyaj))
                 applied = sell_qty
                 allotted = 0.0
                 shares_allotted = int(round(sell_qty))
+                financials = _sell_side_financials(
+                    listing_sell_amt=0.0,
+                    seller_vyaj=grey_sell_amt,
+                    buyer_vyaj=buyer_vyaj,
+                    recorded_brokerage=recorded_brokerage,
+                    premium=True,
+                )
             else:
                 attr_rows = _attribute_allotment_rows(
                     sell_qty, buy_app, allot_by_pos.get(pid, [])
@@ -272,9 +408,13 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
                 applied = sell_qty
                 allotted = float(totals["allotted"])
                 shares_allotted = int(totals["shares_allotted"])
-                sell_amt = float(totals["sell_amt"])
-                vyaj = float(totals["vyaj"])
-                net_pl = float(totals["net_pl"])
+                financials = _sell_side_financials(
+                    listing_sell_amt=float(totals["sell_amt"]),
+                    seller_vyaj=grey_sell_amt,
+                    buyer_vyaj=buyer_vyaj,
+                    recorded_brokerage=recorded_brokerage,
+                    premium=False,
+                )
 
             sell_lines.append(
                 {
@@ -290,10 +430,12 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
                     "applied": applied,
                     "allotted": allotted,
                     "shares_allotted": shares_allotted,
-                    "sell_amt": sell_amt,
-                    "vyaj": vyaj,
-                    "net_pl": net_pl,
-                    "direction": _sell_side_direction(net_pl),
+                    "sell_amt": financials["sell_amt"],
+                    "vyaj": financials["vyaj"],
+                    "buyer_vyaj": buyer_vyaj,
+                    "brokerage": financials["brokerage"],
+                    "net_pl": financials["net_pl"],
+                    "direction": _sell_side_direction(financials["net_pl"]),
                     "sell_rate": float(s.get("sell_rate") or 0),
                     "grey_sell_amt": grey_sell_amt,
                 }
@@ -314,6 +456,7 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
         bucket["shares_allotted"] += int(line["shares_allotted"])
         bucket["sell_amt"] += float(line["sell_amt"])
         bucket["vyaj"] += float(line["vyaj"])
+        bucket["brokerage"] += float(line["brokerage"])
         bucket["net_pl"] += float(line["net_pl"])
 
     summary = []
@@ -333,6 +476,7 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
         "shares_allotted": sum(int(p["shares_allotted"]) for p in summary),
         "sell_amt": float(_money(sum(p["sell_amt"] for p in summary))),
         "vyaj": float(_money(sum(p["vyaj"] for p in summary))),
+        "brokerage": float(_money(sum(p["brokerage"] for p in summary))),
         "net_pl": float(_money(sum(p["net_pl"] for p in summary))),
         "direction": _sell_side_direction(
             float(_money(sum(p["net_pl"] for p in summary)))
@@ -341,7 +485,7 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
     return {
         "sell_party_summary": summary,
         "sell_lines": sell_lines,
-        "grey_market_brokerage": 0.0,
+        "grey_market_brokerage": totals["brokerage"],
         "sell_party_totals": totals,
     }
 
@@ -350,6 +494,7 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
     rows = list_allotments_raw(ipo_id)
     lines = [_build_line_from_allotment(r, ipo) for r in rows]
+    lines.extend(_premium_buy_lines(ipo_id))
     warnings: list[str] = []
     unsold = [l for l in lines if l["status"] == "Allotted" and not l["is_sold"]]
     if unsold:
@@ -357,6 +502,14 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
     pending = [l for l in lines if l["status"] == "Pending"]
     if pending:
         warnings.append(f"{len(pending)} allotment(s) still Pending.")
+    unlinked_premium = [
+        l for l in lines if l.get("is_premium") and not l.get("party_id")
+    ]
+    if unlinked_premium:
+        warnings.append(
+            f"{len(unlinked_premium)} premium buy line(s) have no Client Master party — "
+            "they show here but won't post to the ledger."
+        )
     party = _party_summary(lines)
     sell_side = _grey_market_sell_side(ipo_id)
     if not sell_side["sell_party_summary"]:

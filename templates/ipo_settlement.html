@@ -36,13 +36,14 @@
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b">
       <h2 class="font-semibold text-slate-900">Buy parties (clients) — give / settle</h2>
-      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter applicants &amp; sell trades · Payable = you pay them · Receivable = they pay you</p>
+      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Premium Sell amt is on Ambica’s side (not here)</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 text-xs uppercase text-slate-600">
           <tr>
             <th class="px-3 py-2 text-left">Party</th>
+            <th class="px-3 py-2 text-left">Type</th>
             <th class="px-3 py-2 text-right">Applied</th>
             <th class="px-3 py-2 text-right">Allotted</th>
             <th class="px-3 py-2 text-right">Shares</th>
@@ -53,7 +54,7 @@
           </tr>
         </thead>
         <tbody id="partyBody" class="divide-y divide-slate-100">
-          <tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
+          <tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
         </tbody>
       </table>
     </div>
@@ -62,7 +63,7 @@
   <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50/50">
       <h2 class="font-semibold text-emerald-950">Sell parties — take from (Ambica, Mama, …)</h2>
-      <p class="text-xs text-emerald-800 mt-0.5">Click a row to filter · Payable = you pay them · Premium is a separate row</p>
+      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Brokerage = your dalali · Payable = you pay them · Premium is separate</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -75,12 +76,13 @@
             <th class="px-3 py-2 text-right">Shares</th>
             <th class="px-3 py-2 text-right">Sell amt</th>
             <th class="px-3 py-2 text-right">Vyaj</th>
+            <th class="px-3 py-2 text-right">Brokerage</th>
             <th class="px-3 py-2 text-right">Net P/L</th>
             <th class="px-3 py-2">Dir</th>
           </tr>
         </thead>
         <tbody id="sellPartyBody" class="divide-y divide-slate-100">
-          <tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
+          <tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
         </tbody>
       </table>
     </div>
@@ -129,12 +131,13 @@
             <th class="px-3 py-2 text-right">Shares</th>
             <th class="px-3 py-2 text-right">Sell amt</th>
             <th class="px-3 py-2 text-right">Vyaj</th>
+            <th class="px-3 py-2 text-right">Brokerage</th>
             <th class="px-3 py-2 text-right">Net</th>
             <th class="px-3 py-2">Dir</th>
           </tr>
         </thead>
         <tbody id="sellLineBody" class="divide-y divide-slate-100">
-          <tr><td colspan="11" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
+          <tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">Preview an IPO.</td></tr>
         </tbody>
       </table>
     </div>
@@ -281,18 +284,23 @@
     document.getElementById("partyBody").innerHTML = visible.length
       ? visible.map((p) => {
           const active = filter.buyParty && sameBuy(p.party_name, filter.buyParty);
+          const premium = isPremiumLine(p);
+          const typeLabel = p.line_type || (premium ? "Premium" : "Application");
+          const sellAmtCell = premium || typeLabel === "Premium" ? "—" : fmt(p.sell_amt);
+          const allottedCell = premium || typeLabel === "Premium" ? "—" : fmt(p.allotted);
           return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(p.party_name || "")}">
           <td class="px-3 py-2 font-medium text-sky-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(p.party_name)}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${premium || typeLabel === "Premium" ? "text-violet-700" : typeLabel === "Mixed" ? "text-amber-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
-          <td class="px-3 py-2 text-right">${fmt(p.allotted)}</td>
+          <td class="px-3 py-2 text-right">${allottedCell}</td>
           <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${fmt(p.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${sellAmtCell}</td>
           <td class="px-3 py-2 text-right">${fmt(p.vyaj)}</td>
           <td class="px-3 py-2 text-right font-semibold">${fmt(p.net_pl)}</td>
           <td class="px-3 py-2 text-xs font-medium ${dirClass(p.direction)}">${TradeSlip.escapeHtml(p.direction)}</td>
         </tr>`;
         }).join("")
-      : `<tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">${parties.length ? "No buy parties match this filter." : "No buy-party lines."}</td></tr>`;
+      : `<tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">${parties.length ? "No buy parties match this filter." : "No buy-party lines."}</td></tr>`;
 
     document.querySelectorAll("#partyBody tr[data-filter-buy]").forEach((tr) => {
       tr.addEventListener("click", () => {
@@ -327,8 +335,9 @@
           <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
           <td class="px-3 py-2 text-right">${premium ? "—" : fmt(p.allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${fmt(p.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(p.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.vyaj)}</td>
+          <td class="px-3 py-2 text-right font-semibold text-violet-700">${fmt(p.brokerage)}</td>
           <td class="px-3 py-2 text-right font-semibold">${fmt(p.net_pl)}</td>
           <td class="px-3 py-2 text-xs font-medium ${dirClass(p.direction)}">${TradeSlip.escapeHtml(p.direction)}</td>
         </tr>`;
@@ -342,11 +351,12 @@
               <td class="px-3 py-2 text-right">${fmt(sellTotals.shares_allotted)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.sell_amt)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.vyaj)}</td>
+              <td class="px-3 py-2 text-right text-violet-800">${fmt(sellTotals.brokerage)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.net_pl)}</td>
               <td class="px-3 py-2"></td>
             </tr>`
           : "")
-      : `<tr><td colspan="9" class="px-4 py-6 text-center text-slate-500">${sellParties.length ? "No sell parties match this filter." : "No grey-market sells yet. Record sells on Positions (sell party = Ambica / Mama / …)."}</td></tr>`;
+      : `<tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">${sellParties.length ? "No sell parties match this filter." : "No grey-market sells yet. Record sells on Positions (sell party = Ambica / Mama / …)."}</td></tr>`;
 
     document.querySelectorAll("#sellPartyBody tr[data-filter-sell]").forEach((tr) => {
       tr.addEventListener("click", () => {
@@ -373,11 +383,11 @@
       ? visible.map((l) => {
           const active = filter.buyParty && sameBuy(l.party_name, filter.buyParty);
           return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(l.party_name || "")}">
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(l.applicant_name || "—")}
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(l.applicant_name || "—")}${isPremiumLine(l) ? ' <span class="text-xs font-semibold text-violet-700">Premium</span>' : ""}
             <div class="text-xs text-slate-500">${TradeSlip.escapeHtml(l.party_name || "")}</div>
           </td>
           <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${isPremiumLine(l) ? "—" : fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
         </tr>`;
@@ -419,13 +429,14 @@
           <td class="px-3 py-2 text-right">${fmt(l.applied)}</td>
           <td class="px-3 py-2 text-right">${premium ? "—" : fmt(l.allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right font-semibold">${fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right font-semibold">${premium ? "—" : fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
+          <td class="px-3 py-2 text-right font-semibold text-violet-700">${fmt(l.brokerage)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
           <td class="px-3 py-2 text-xs font-medium ${dirClass(l.direction)}">${TradeSlip.escapeHtml(l.direction || "")}</td>
         </tr>`;
         }).join("")
-      : `<tr><td colspan="11" class="px-4 py-6 text-center text-slate-500">${sellLines.length ? "No sell trades match this filter." : "No sell trades."}</td></tr>`;
+      : `<tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">${sellLines.length ? "No sell trades match this filter." : "No sell trades."}</td></tr>`;
 
     document.querySelectorAll("#sellLineBody tr[data-filter-sell]").forEach((tr) => {
       tr.addEventListener("click", () => {
