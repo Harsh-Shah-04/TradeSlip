@@ -9,6 +9,7 @@ import httpx
 from utils.ipo.categories import (
     category_group_for,
     is_premium,
+    is_subject2,
     validate_category_pair,
 )
 from utils.ipo.clients import get_applicant, get_party
@@ -44,9 +45,18 @@ def _money(value: float | int | Decimal | str) -> Decimal:
 
 
 def _calc_brokerage(
-    sell_app: float | Decimal, sell_rate: float | Decimal, buy_rate: float | Decimal
-) -> Decimal:
-    """Earned brokerage = sell amount − buy amount for the sold quantity."""
+    sell_app: float | Decimal,
+    sell_rate: float | Decimal,
+    buy_rate: float | Decimal,
+    category: str | None = None,
+) -> Decimal | None:
+    """Earned brokerage = sell amount − buy amount for the sold quantity.
+
+    Subject 2 returns None: its brokerage is Shares × (Sell Rate − Buy Rate) and the
+    allotted shares aren't known at sell time. Settlement computes it from allotments.
+    """
+    if is_subject2(category):
+        return None
     sell_amt = _money(sell_app) * _money(sell_rate)
     buy_amt_for_sold = _money(sell_app) * _money(buy_rate)
     return (sell_amt - buy_amt_for_sold).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -544,7 +554,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
-    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"])
+    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"], position.get("category"))
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     sell_row = {
         "broker_id": broker_id,
@@ -554,7 +564,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "sell_rate": float(_money(sell_rate)),
         "sell_amt": float(sell_amt),
         "sell_party": sell_party_name,
-        "brokerage": float(brokerage),
+        "brokerage": None if brokerage is None else float(brokerage),
         "notes": "",
         "updated_at": _now(),
     }
@@ -696,7 +706,9 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
     sell_amt = (_money(payload.sell_app) * _money(payload.sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
-    brokerage = _calc_brokerage(payload.sell_app, payload.sell_rate, position["buy_rate"])
+    brokerage = _calc_brokerage(
+        payload.sell_app, payload.sell_rate, position["buy_rate"], position.get("category")
+    )
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     row = {
         "broker_id": broker_id,
@@ -706,7 +718,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         "sell_rate": float(_money(payload.sell_rate)),
         "sell_amt": float(sell_amt),
         "sell_party": sell_party_name,
-        "brokerage": float(brokerage),
+        "brokerage": None if brokerage is None else float(brokerage),
         "notes": payload.notes or "",
         "updated_at": _now(),
     }
@@ -754,7 +766,7 @@ def update_sell(
 
     sell_rate = payload.sell_rate if payload.sell_rate is not None else existing_sell["sell_rate"]
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
-    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"])
+    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"], position.get("category"))
 
     patch = {
         "sell_date": payload.sell_date or existing_sell["sell_date"],
@@ -766,7 +778,7 @@ def update_sell(
             if payload.sell_party is not None
             else existing_sell["sell_party"]
         ),
-        "brokerage": float(brokerage),
+        "brokerage": None if brokerage is None else float(brokerage),
         "notes": payload.notes if payload.notes is not None else existing_sell.get("notes") or "",
         "updated_at": _now(),
     }

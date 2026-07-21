@@ -741,7 +741,11 @@
     const buyRate = Number(document.getElementById("buyRate").value || 0);
     const sellAmt = a * r;
     document.getElementById("buySellAmtPreview").textContent = fmt(sellAmt);
-    document.getElementById("buySellBrokeragePreview").textContent = fmt(sellAmt - a * buyRate);
+    // Subject 2 settles only the difference vs the guarantee, on allotted shares.
+    document.getElementById("buySellBrokeragePreview").textContent =
+      document.getElementById("buyCategory").value === "Subject 2"
+        ? "Settles Shares × (Allotment Sold Price − Buy rate) difference after allotment (see Settlement)"
+        : fmt(sellAmt - a * buyRate);
   }
 
   document.getElementById("buySellToggle").addEventListener("click", () => {
@@ -947,7 +951,9 @@
             .map(
               (s) => `<div class="flex justify-between items-center rounded-lg border border-slate-200 px-3 py-2">
             <div>${TradeSlip.escapeHtml(s.sell_date)} · ${TradeSlip.escapeHtml(s.sell_party)} · ${fmt(s.sell_app)} @ ${fmt(s.sell_rate)} = ${fmt(s.sell_amt)}
-              <span class="text-emerald-700 font-medium"> · Brokerage ${fmt(s.brokerage ?? 0)}</span>
+              ${payload.category === "Subject 2"
+                ? '<span class="text-orange-700 font-medium"> · Settles difference vs guarantee using allotment sold prices (see Settlement)</span>'
+                : `<span class="text-emerald-700 font-medium"> · Brokerage ${fmt(s.brokerage ?? 0)}</span>`}
             </div>
             <button type="button" class="del-sell text-xs text-red-600" data-id="${TradeSlip.escapeHtml(s.id)}">Remove</button>
           </div>`
@@ -1141,7 +1147,11 @@
     const sellAmt = a * r;
     const buyAmtForSold = a * buyRate;
     document.getElementById("sellAmtPreview").textContent = fmt(sellAmt);
-    document.getElementById("sellBrokeragePreview").textContent = fmt(sellAmt - buyAmtForSold);
+    // Subject 2 settles only the difference vs the guarantee, on allotted shares.
+    document.getElementById("sellBrokeragePreview").textContent =
+      currentDetail && currentDetail.category === "Subject 2"
+        ? "Settles Shares × (Allotment Sold Price − Buy rate) difference after allotment (see Settlement)"
+        : fmt(sellAmt - buyAmtForSold);
   }
   document.getElementById("sellApp").addEventListener("input", recalcSell);
   document.getElementById("sellRate").addEventListener("input", recalcSell);

@@ -55,6 +55,11 @@ def is_premium(category: str | None) -> bool:
     return (category or "").strip() == "Premium"
 
 
+def is_subject2(category: str | None) -> bool:
+    """Subject 2 = guaranteed pre-listing deal: settle Shares × Buy Rate only if allotted."""
+    return (category or "").strip().casefold() in ("subject 2", "subject2", "subject-2")
+
+
 def quantity_label(category: str | None) -> str:
     return "No. of Shares" if is_premium(category) else "BUY APP"
 

@@ -36,7 +36,7 @@
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b">
       <h2 class="font-semibold text-slate-900">Buy parties (clients) — give / settle</h2>
-      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Premium Sell amt is on Ambica’s side (not here)</p>
+      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Subject 2 settles only the difference: Net = Market (Shares × Allotment Sold Price) − Guaranteed (Shares × Buy Rate)</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -63,7 +63,7 @@
   <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50/50">
       <h2 class="font-semibold text-emerald-950">Sell parties — take from (Ambica, Mama, …)</h2>
-      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Brokerage = your dalali · Payable = you pay them · Premium is separate</p>
+      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Subject 2: Vyaj = contract (Shares × Sell Rate); Net = Market (Allotment Sold Price) − Contract → the balance receivable from the sell party · Premium / Subject 2 are separate</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -151,7 +151,7 @@
 <script>
   let draftId = null;
   let previewData = null;
-  let filter = { buyParty: null, sellParty: null, isPremium: null };
+  let filter = { buyParty: null, sellParty: null, lineType: null };
 
   function fmt(n) {
     return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -165,12 +165,25 @@
     return d === "Payable" ? "text-amber-700" : d === "Receivable" ? "text-emerald-700" : "text-slate-600";
   }
 
+  function lineTypeOf(row) {
+    if (!row) return "Application";
+    if (row.line_type) return row.line_type;
+    return row.is_premium ? "Premium" : "Application";
+  }
+
   function isPremiumLine(row) {
-    return !!(row && (row.is_premium || row.line_type === "Premium"));
+    return lineTypeOf(row) === "Premium";
+  }
+
+  function typeClass(type) {
+    if (type === "Premium") return "text-violet-700";
+    if (type === "Subject 2") return "text-orange-700";
+    if (type === "Mixed") return "text-amber-700";
+    return "text-slate-600";
   }
 
   function hasFilter() {
-    return !!(filter.buyParty || filter.sellParty || filter.isPremium != null);
+    return !!(filter.buyParty || filter.sellParty || filter.lineType != null);
   }
 
   function sameBuy(a, b) {
@@ -184,7 +197,7 @@
   function sellLineMatches(l) {
     if (filter.buyParty && !sameBuy(l.buy_party, filter.buyParty)) return false;
     if (filter.sellParty && !sameSell(l.sell_party, filter.sellParty)) return false;
-    if (filter.isPremium != null && isPremiumLine(l) !== filter.isPremium) return false;
+    if (filter.lineType != null && lineTypeOf(l) !== filter.lineType) return false;
     return true;
   }
 
@@ -212,15 +225,15 @@
   function sellPartyMatches(p) {
     if (!hasFilter()) return true;
     const base = p.sell_party_base || p.sell_party || "";
-    const premium = isPremiumLine(p);
+    const type = lineTypeOf(p);
     if (filter.sellParty && !sameSell(base, filter.sellParty)) return false;
-    if (filter.isPremium != null && premium !== filter.isPremium) return false;
+    if (filter.lineType != null && type !== filter.lineType) return false;
     if (filter.buyParty) {
       const sellLines = (previewData && previewData.sell_lines) || [];
       return sellLines.some(
         (l) =>
           sameSell(l.sell_party, base) &&
-          isPremiumLine(l) === premium &&
+          lineTypeOf(l) === type &&
           sameBuy(l.buy_party, filter.buyParty)
       );
     }
@@ -231,14 +244,14 @@
     filter = {
       buyParty: next.buyParty != null ? next.buyParty : null,
       sellParty: next.sellParty != null ? next.sellParty : null,
-      isPremium: next.isPremium != null ? next.isPremium : null,
+      lineType: next.lineType != null ? next.lineType : null,
     };
     // Toggle off if clicking the same active filter again
     paintAll();
   }
 
   function clearFilter() {
-    filter = { buyParty: null, sellParty: null, isPremium: null };
+    filter = { buyParty: null, sellParty: null, lineType: null };
     paintAll();
   }
 
@@ -253,10 +266,9 @@
     const parts = [];
     if (filter.buyParty) parts.push(`Buy party: ${filter.buyParty}`);
     if (filter.sellParty) {
-      const type = filter.isPremium ? "Premium" : filter.isPremium === false ? "Application" : "";
-      parts.push(`Sell party: ${filter.sellParty}${type ? ` (${type})` : ""}`);
-    } else if (filter.isPremium != null) {
-      parts.push(filter.isPremium ? "Type: Premium" : "Type: Application");
+      parts.push(`Sell party: ${filter.sellParty}${filter.lineType ? ` (${filter.lineType})` : ""}`);
+    } else if (filter.lineType != null) {
+      parts.push(`Type: ${filter.lineType}`);
     }
     label.textContent = parts.join(" · ");
     bar.classList.remove("hidden");
@@ -284,13 +296,13 @@
     document.getElementById("partyBody").innerHTML = visible.length
       ? visible.map((p) => {
           const active = filter.buyParty && sameBuy(p.party_name, filter.buyParty);
-          const premium = isPremiumLine(p);
-          const typeLabel = p.line_type || (premium ? "Premium" : "Application");
-          const sellAmtCell = premium || typeLabel === "Premium" ? "—" : fmt(p.sell_amt);
-          const allottedCell = premium || typeLabel === "Premium" ? "—" : fmt(p.allotted);
+          const typeLabel = lineTypeOf(p);
+          // Premium has no listing-sale leg; Subject 2 shows the market sale amount
+          const sellAmtCell = typeLabel === "Premium" ? "—" : fmt(p.sell_amt);
+          const allottedCell = typeLabel === "Premium" ? "—" : fmt(p.allotted);
           return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(p.party_name || "")}">
           <td class="px-3 py-2 font-medium text-sky-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(p.party_name)}</td>
-          <td class="px-3 py-2 text-xs font-semibold ${premium || typeLabel === "Premium" ? "text-violet-700" : typeLabel === "Mixed" ? "text-amber-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${typeClass(typeLabel)}">${TradeSlip.escapeHtml(typeLabel)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
           <td class="px-3 py-2 text-right">${allottedCell}</td>
           <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
@@ -305,11 +317,11 @@
     document.querySelectorAll("#partyBody tr[data-filter-buy]").forEach((tr) => {
       tr.addEventListener("click", () => {
         const name = tr.getAttribute("data-filter-buy") || "";
-        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.isPremium == null) {
+        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.lineType == null) {
           clearFilter();
           return;
         }
-        setFilter({ buyParty: name, sellParty: null, isPremium: null });
+        setFilter({ buyParty: name, sellParty: null, lineType: null });
       });
     });
   }
@@ -323,21 +335,21 @@
     document.getElementById("sellPartyBody").innerHTML = visible.length
       ? visible.map((p) => {
           const base = p.sell_party_base || p.sell_party || "—";
-          const premium = isPremiumLine(p);
-          const typeLabel = premium ? "Premium" : "Application";
+          const typeLabel = lineTypeOf(p);
+          const noListingLeg = typeLabel === "Premium";
           const active =
             filter.sellParty &&
             sameSell(base, filter.sellParty) &&
-            (filter.isPremium == null || filter.isPremium === premium);
-          return `<tr class="${rowBtnClass(active)}" data-filter-sell="${TradeSlip.escapeHtml(base)}" data-filter-premium="${premium ? "1" : "0"}">
+            (filter.lineType == null || filter.lineType === typeLabel);
+          return `<tr class="${rowBtnClass(active)}" data-filter-sell="${TradeSlip.escapeHtml(base)}" data-filter-type="${TradeSlip.escapeHtml(typeLabel)}">
           <td class="px-3 py-2 font-medium text-emerald-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(base)}</td>
-          <td class="px-3 py-2 text-xs font-semibold ${premium ? "text-violet-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${typeClass(typeLabel)}">${TradeSlip.escapeHtml(typeLabel)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.applied)}</td>
-          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(p.allotted)}</td>
+          <td class="px-3 py-2 text-right">${typeLabel === "Premium" ? "—" : fmt(p.allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(p.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${noListingLeg ? "—" : fmt(p.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(p.vyaj)}</td>
-          <td class="px-3 py-2 text-right font-semibold text-violet-700">${fmt(p.brokerage)}</td>
+          <td class="px-3 py-2 text-right font-semibold text-emerald-700">${fmt(p.brokerage)}</td>
           <td class="px-3 py-2 text-right font-semibold">${fmt(p.net_pl)}</td>
           <td class="px-3 py-2 text-xs font-medium ${dirClass(p.direction)}">${TradeSlip.escapeHtml(p.direction)}</td>
         </tr>`;
@@ -351,7 +363,7 @@
               <td class="px-3 py-2 text-right">${fmt(sellTotals.shares_allotted)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.sell_amt)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.vyaj)}</td>
-              <td class="px-3 py-2 text-right text-violet-800">${fmt(sellTotals.brokerage)}</td>
+              <td class="px-3 py-2 text-right text-emerald-800">${fmt(sellTotals.brokerage)}</td>
               <td class="px-3 py-2 text-right">${fmt(sellTotals.net_pl)}</td>
               <td class="px-3 py-2"></td>
             </tr>`
@@ -361,17 +373,17 @@
     document.querySelectorAll("#sellPartyBody tr[data-filter-sell]").forEach((tr) => {
       tr.addEventListener("click", () => {
         const sell = tr.getAttribute("data-filter-sell") || "";
-        const premium = tr.getAttribute("data-filter-premium") === "1";
+        const type = tr.getAttribute("data-filter-type") || "Application";
         if (
           filter.sellParty &&
           sameSell(filter.sellParty, sell) &&
-          filter.isPremium === premium &&
+          filter.lineType === type &&
           !filter.buyParty
         ) {
           clearFilter();
           return;
         }
-        setFilter({ buyParty: null, sellParty: sell, isPremium: premium });
+        setFilter({ buyParty: null, sellParty: sell, lineType: type });
       });
     });
   }
@@ -383,11 +395,11 @@
       ? visible.map((l) => {
           const active = filter.buyParty && sameBuy(l.party_name, filter.buyParty);
           return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(l.party_name || "")}">
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(l.applicant_name || "—")}${isPremiumLine(l) ? ' <span class="text-xs font-semibold text-violet-700">Premium</span>' : ""}
+          <td class="px-3 py-2">${TradeSlip.escapeHtml(l.applicant_name || "—")}${lineTypeOf(l) !== "Application" ? ` <span class="text-xs font-semibold ${typeClass(lineTypeOf(l))}">${TradeSlip.escapeHtml(lineTypeOf(l))}</span>` : ""}
             <div class="text-xs text-slate-500">${TradeSlip.escapeHtml(l.party_name || "")}</div>
           </td>
           <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${isPremiumLine(l) ? "—" : fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${lineTypeOf(l) === "Premium" ? "—" : fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
         </tr>`;
@@ -397,11 +409,11 @@
     document.querySelectorAll("#lineBody tr[data-filter-buy]").forEach((tr) => {
       tr.addEventListener("click", () => {
         const name = tr.getAttribute("data-filter-buy") || "";
-        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.isPremium == null) {
+        if (filter.buyParty && sameBuy(filter.buyParty, name) && !filter.sellParty && filter.lineType == null) {
           clearFilter();
           return;
         }
-        setFilter({ buyParty: name, sellParty: null, isPremium: null });
+        setFilter({ buyParty: name, sellParty: null, lineType: null });
       });
     });
   }
@@ -411,27 +423,27 @@
     const visible = sellLines.filter(sellLineMatches);
     document.getElementById("sellLineBody").innerHTML = visible.length
       ? visible.map((l) => {
-          const premium = isPremiumLine(l);
-          const typeLabel = premium ? "Premium" : "Application";
+          const typeLabel = lineTypeOf(l);
+          const noListingLeg = typeLabel === "Premium";
           const active =
             (!filter.buyParty || sameBuy(l.buy_party, filter.buyParty)) &&
             (!filter.sellParty || sameSell(l.sell_party, filter.sellParty)) &&
-            (filter.isPremium == null || filter.isPremium === premium) &&
+            (filter.lineType == null || filter.lineType === typeLabel) &&
             hasFilter();
           return `<tr class="${rowBtnClass(active)}"
             data-filter-buy="${TradeSlip.escapeHtml(l.buy_party || "")}"
             data-filter-sell="${TradeSlip.escapeHtml(l.sell_party || "")}"
-            data-filter-premium="${premium ? "1" : "0"}">
+            data-filter-type="${TradeSlip.escapeHtml(typeLabel)}">
           <td class="px-3 py-2 whitespace-nowrap">${TradeSlip.escapeHtml(l.sell_date || "—")}</td>
           <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(l.sell_party || "—")}</td>
-          <td class="px-3 py-2 text-xs font-semibold ${premium ? "text-violet-700" : "text-slate-600"}">${TradeSlip.escapeHtml(typeLabel)}</td>
+          <td class="px-3 py-2 text-xs font-semibold ${typeClass(typeLabel)}">${TradeSlip.escapeHtml(typeLabel)}</td>
           <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(l.buy_party || "—")}</td>
           <td class="px-3 py-2 text-right">${fmt(l.applied)}</td>
-          <td class="px-3 py-2 text-right">${premium ? "—" : fmt(l.allotted)}</td>
+          <td class="px-3 py-2 text-right">${typeLabel === "Premium" ? "—" : fmt(l.allotted)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right font-semibold">${premium ? "—" : fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right font-semibold">${noListingLeg ? "—" : fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
-          <td class="px-3 py-2 text-right font-semibold text-violet-700">${fmt(l.brokerage)}</td>
+          <td class="px-3 py-2 text-right font-semibold text-emerald-700">${fmt(l.brokerage)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
           <td class="px-3 py-2 text-xs font-medium ${dirClass(l.direction)}">${TradeSlip.escapeHtml(l.direction || "")}</td>
         </tr>`;
@@ -442,18 +454,18 @@
       tr.addEventListener("click", () => {
         const buy = tr.getAttribute("data-filter-buy") || "";
         const sell = tr.getAttribute("data-filter-sell") || "";
-        const premium = tr.getAttribute("data-filter-premium") === "1";
+        const type = tr.getAttribute("data-filter-type") || "Application";
         if (
           filter.buyParty &&
           sameBuy(filter.buyParty, buy) &&
           filter.sellParty &&
           sameSell(filter.sellParty, sell) &&
-          filter.isPremium === premium
+          filter.lineType === type
         ) {
           clearFilter();
           return;
         }
-        setFilter({ buyParty: buy, sellParty: sell, isPremium: premium });
+        setFilter({ buyParty: buy, sellParty: sell, lineType: type });
       });
     });
   }
@@ -470,7 +482,7 @@
 
   function renderPreview(data) {
     previewData = data;
-    filter = { buyParty: null, sellParty: null, isPremium: null };
+    filter = { buyParty: null, sellParty: null, lineType: null };
     paintAll();
   }
 
