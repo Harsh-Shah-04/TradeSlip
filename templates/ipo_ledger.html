@@ -6,7 +6,7 @@
 <header class="mb-5 flex flex-wrap items-start justify-between gap-3">
   <div>
     <h1 class="text-3xl font-bold text-slate-900">Ledger</h1>
-    <p class="text-slate-600 mt-1">Every rupee, every IPO, clients and sell parties together. Nothing is ever deleted from the record.</p>
+    <p class="text-slate-600 mt-1">Who you still need to <strong class="text-emerald-800">collect from</strong>, and who you still need to <strong class="text-rose-800">pay</strong>. Green = money coming in. Red = money going out.</p>
   </div>
   {% if is_admin %}
   <button type="button" id="syncBtn"
@@ -19,19 +19,19 @@
 <div class="rounded-xl border border-slate-200 bg-white p-4 mb-5 shadow-sm">
   <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 items-center">
     <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Take from sell parties</div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Still to collect</div>
       <div class="text-2xl font-bold text-emerald-900 mt-1" id="flowCollect">0.00</div>
-      <div class="text-xs text-emerald-700 mt-0.5">Ambica, Mama, …</div>
+      <div class="text-xs text-emerald-700 mt-0.5">from Ambica, Mama, clients…</div>
     </div>
     <div class="hidden lg:block text-2xl text-slate-300 font-bold text-center">&rarr;</div>
     <div class="rounded-lg border border-rose-200 bg-rose-50 p-4">
-      <div class="text-xs font-semibold uppercase tracking-wide text-rose-700">Give to clients</div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-rose-700">Still to pay</div>
       <div class="text-2xl font-bold text-rose-900 mt-1" id="flowGive">0.00</div>
-      <div class="text-xs text-rose-700 mt-0.5">buy parties</div>
+      <div class="text-xs text-rose-700 mt-0.5">to clients / sell parties</div>
     </div>
     <div class="hidden lg:block text-2xl text-slate-300 font-bold text-center">=</div>
     <div class="rounded-lg border-2 border-slate-800 bg-slate-900 p-4">
-      <div class="text-xs font-semibold uppercase tracking-wide text-slate-300">You keep</div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-300">Your leftover</div>
       <div class="text-2xl font-bold text-white mt-1" id="flowNet">0.00</div>
       <div class="text-xs text-slate-400 mt-0.5" id="flowNetNote">brokerage</div>
     </div>
@@ -77,9 +77,9 @@
           <th class="px-3 py-3 text-left">Name</th>
           <th class="px-3 py-3 text-left">Type</th>
           <th class="px-3 py-3 text-right">Pending IPOs</th>
-          <th class="px-3 py-3 text-right">To receive</th>
-          <th class="px-3 py-3 text-right">To pay</th>
-          <th class="px-3 py-3 text-right">Net outstanding</th>
+          <th class="px-3 py-3 text-right">Collect</th>
+          <th class="px-3 py-3 text-right">Pay them</th>
+          <th class="px-3 py-3 text-right">Net pending</th>
           <th class="px-3 py-3 text-left">Last activity</th>
           <th class="px-3 py-3 w-24"></th>
         </tr>
@@ -105,9 +105,9 @@
           <th class="px-3 py-3 text-left">Listing</th>
           <th class="px-3 py-3 text-right">Parties</th>
           <th class="px-3 py-3 text-right">Pending</th>
-          <th class="px-3 py-3 text-right">To collect</th>
-          <th class="px-3 py-3 text-right">To give</th>
-          <th class="px-3 py-3 text-right">Left with you</th>
+          <th class="px-3 py-3 text-right">Collect</th>
+          <th class="px-3 py-3 text-right">Pay them</th>
+          <th class="px-3 py-3 text-right">Your leftover</th>
           <th class="px-3 py-3 w-24"></th>
         </tr>
       </thead>
@@ -128,15 +128,15 @@
     </div>
     <div class="flex gap-6 text-right">
       <div>
-        <div class="text-xs uppercase tracking-wide text-emerald-700 font-semibold">To collect</div>
+        <div class="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Collect</div>
         <div class="text-xl font-bold text-emerald-800" id="ipoCollect">0.00</div>
       </div>
       <div>
-        <div class="text-xs uppercase tracking-wide text-rose-700 font-semibold">To give</div>
+        <div class="text-xs uppercase tracking-wide text-rose-700 font-semibold">Pay them</div>
         <div class="text-xl font-bold text-rose-800" id="ipoGive">0.00</div>
       </div>
       <div>
-        <div class="text-xs uppercase tracking-wide text-slate-500 font-semibold">Brokerage</div>
+        <div class="text-xs uppercase tracking-wide text-slate-500 font-semibold">Your leftover</div>
         <div class="text-xl font-bold text-slate-900" id="ipoBrokerage">0.00</div>
       </div>
     </div>
@@ -185,7 +185,7 @@
       <p class="text-slate-600 mt-1" id="detailSubtitle">—</p>
     </div>
     <div class="text-right">
-      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Net outstanding</div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Net pending</div>
       <div class="text-3xl font-bold" id="detailBalance">0</div>
       <div class="text-sm font-medium" id="detailDirection"></div>
       <div class="mt-1 flex justify-end gap-3 text-sm font-semibold">
@@ -263,10 +263,10 @@
       <div class="text-sm" id="barTotal">—</div>
     </div>
     <div id="barAmountWrap">
-      <label class="block text-xs font-medium text-slate-600 mb-1" for="barAmount">Paying now</label>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="barAmount">Amount now</label>
       <input type="number" id="barAmount" min="0" step="any"
              class="w-40 rounded-lg border border-slate-300 px-3 py-2 text-sm text-right font-semibold" />
-      <div class="text-[11px] text-slate-500 mt-0.5">less = part paid, rest carries forward</div>
+      <div class="text-[11px] text-slate-500 mt-0.5">less than full = part payment</div>
     </div>
     <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="barDate">Date</label>
@@ -278,7 +278,7 @@
              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
     </div>
     <button type="button" id="barClear" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Clear</button>
-    <button type="button" id="barSubmit" class="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-800">Mark paid</button>
+    <button type="button" id="barSubmit" class="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-800">Record payment</button>
   </div>
 </div>
 
@@ -293,8 +293,8 @@
       <div>
         <label class="block text-xs font-medium text-slate-600 mb-1">Which way?</label>
         <select id="adjDirection" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-          <option value="receive">They owe me more (+)</option>
-          <option value="pay">I owe them more (−)</option>
+          <option value="receive">Collect more from them</option>
+          <option value="pay">Pay them more</option>
         </select>
       </div>
       <div>
@@ -377,18 +377,34 @@
   const money = (n) =>
     Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  function entryLabel(type) {
+    return ({
+      Settlement: "Settlement",
+      Adjustment: "Adjustment",
+      PaymentReceived: "Money in (collected)",
+      PaymentPaid: "Money out (paid)",
+    })[type] || type;
+  }
+
+  function moneyDirection(n) {
+    if (Math.abs(Number(n || 0)) < 0.005) return "Cleared — nothing pending";
+    return Number(n) > 0 ? "Collect from them" : "Pay them";
+  }
+
   function amountClass(n) {
     if (Math.abs(Number(n || 0)) < 0.005) return "text-slate-400";
     return Number(n) > 0 ? "text-emerald-700" : "text-rose-700";
   }
 
   function statusBadge(status) {
+    const label = status === "Done" ? "Cleared" : status;
     const map = {
       "Pending": "bg-amber-100 text-amber-800",
       "Part paid": "bg-sky-100 text-sky-800",
       "Done": "bg-slate-100 text-slate-500",
+      "Cleared": "bg-slate-100 text-slate-500",
     };
-    return `<span class="rounded-full px-2 py-0.5 text-xs font-semibold ${map[status] || map.Pending}">${esc(status)}</span>`;
+    return `<span class="rounded-full px-2 py-0.5 text-xs font-semibold ${map[status] || map[label] || map.Pending}">${esc(label)}</span>`;
   }
 
   function sideBadge(side) {
@@ -521,19 +537,22 @@
   // ------------------------------------------------------------------- flow
 
   function renderFlow(s) {
-    $("flowCollect").textContent = money(s.collect_from_sellers);
-    $("flowGive").textContent = money(s.give_to_clients);
+    $("flowCollect").textContent = money(s.collect_total);
+    $("flowGive").textContent = money(s.give_total);
     $("flowNet").textContent = money(Math.abs(s.net));
     $("flowNetNote").textContent =
-      s.net >= 0 ? "brokerage you keep" : "short — you pay out more than you collect";
+      s.net >= 0 ? "your brokerage leftover" : "shortfall — paying out more than collecting";
 
     const extras = [];
+    if (s.collect_from_sellers > 0.005)
+      extras.push(`<span>Collect from sell parties: <span class="text-emerald-700 font-semibold">${money(s.collect_from_sellers)}</span></span>`);
     if (s.collect_from_clients > 0.005)
-      extras.push(`<span><span class="text-emerald-700 font-semibold">${money(s.collect_from_clients)}</span> also to collect from clients</span>`);
+      extras.push(`<span>Collect from clients: <span class="text-emerald-700 font-semibold">${money(s.collect_from_clients)}</span></span>`);
+    if (s.give_to_clients > 0.005)
+      extras.push(`<span>Pay clients: <span class="text-rose-700 font-semibold">${money(s.give_to_clients)}</span></span>`);
     if (s.give_to_sellers > 0.005)
-      extras.push(`<span><span class="text-rose-700 font-semibold">${money(s.give_to_sellers)}</span> also to give to sell parties</span>`);
+      extras.push(`<span>Pay sell parties: <span class="text-rose-700 font-semibold">${money(s.give_to_sellers)}</span></span>`);
     if (extras.length) {
-      extras.push(`<span class="text-slate-500">Totals: collect ${money(s.collect_total)} · give ${money(s.give_total)}</span>`);
       $("flowExtras").innerHTML = extras.join("");
       $("flowExtras").classList.remove("hidden");
       $("flowExtras").classList.add("flex");
@@ -582,7 +601,7 @@
       const box = isAdmin
         ? `<td class="px-3 py-3">${
             a.open_count === 0 ? ""
-            : mixed ? '<span title="Owes and is owed — open the row" class="text-slate-300">–</span>'
+            : mixed ? '<span title="Both: collect some and pay some — open the row" class="text-slate-300">–</span>'
             : `<input type="checkbox" class="acctBox h-4 w-4 rounded border-slate-300" data-id="${esc(a.account_id)}" ${checked} />`
           }</td>` : "";
       return `<tr class="hover:bg-slate-50 ${checked ? "bg-emerald-50/40" : ""}">
@@ -596,7 +615,12 @@
         <td class="px-3 py-3 text-right ${a.open_count ? "font-semibold text-slate-900" : "text-slate-400"}">${a.open_count}</td>
         <td class="px-3 py-3 text-right ${a.to_receive > 0.005 ? "text-emerald-700 font-medium" : "text-slate-300"}">${money(a.to_receive)}</td>
         <td class="px-3 py-3 text-right ${a.to_pay > 0.005 ? "text-rose-700 font-medium" : "text-slate-300"}">${money(a.to_pay)}</td>
-        <td class="px-3 py-3 text-right font-bold ${amountClass(a.balance)}">${money(Math.abs(a.balance))}</td>
+        <td class="px-3 py-3 text-right font-bold ${amountClass(a.balance)}">
+          ${money(Math.abs(a.balance))}
+          ${Math.abs(a.balance) > 0.005 && !mixed
+            ? `<div class="text-[11px] font-medium ${amountClass(a.balance)}">${a.balance > 0 ? "collect" : "pay them"}</div>`
+            : ""}
+        </td>
         <td class="px-3 py-3 text-slate-500">${esc(a.last_activity || "—")}</td>
         <td class="px-3 py-3 text-right">
           <button type="button" class="openAcct rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
@@ -616,8 +640,8 @@
     const who = state.side === "seller" ? "sell parties" : state.side === "buyer" ? "clients" : "accounts";
     $("tabTotal").innerHTML =
       `${t.account_count || 0} ${who} · ${t.open_count || 0} pending IPO(s) · ` +
-      `<span class="text-emerald-700 font-semibold">${money(t.to_receive)}</span> to receive · ` +
-      `<span class="text-rose-700 font-semibold">${money(t.to_pay)}</span> to pay`;
+      `<span class="text-emerald-700 font-semibold">${money(t.to_receive)}</span> to collect · ` +
+      `<span class="text-rose-700 font-semibold">${money(t.to_pay)}</span> to pay them`;
     $("overviewExport").href =
       `/api/ipo/ledger/overview.xlsx?side=${encodeURIComponent(state.side === "all" ? "buyer" : state.side)}&include_settled=${state.showSettled}`;
     renderAccountRows();
@@ -649,14 +673,14 @@
     $("detailBalance").textContent = money(Math.abs(data.balance));
     $("detailBalance").className = `text-3xl font-bold ${amountClass(data.balance)}`;
     const dir = $("detailDirection");
-    dir.textContent = data.balance > 0.005 ? "they owe us" : data.balance < -0.005 ? "we owe them" : "settled";
+    dir.textContent = moneyDirection(data.balance);
     dir.className = `text-sm font-medium ${amountClass(data.balance)}`;
     $("detailExport").href =
       `/api/ipo/ledger/${encodeURIComponent(acct.account_id)}/statement.xlsx?account_type=${encodeURIComponent(acct.account_type)}`;
 
     const note = $("onAccountNote");
     if (data.on_account > 0.005) {
-      note.textContent = `${money(data.on_account)} of payments is not linked to any IPO yet (paid in advance / on account).`;
+      note.textContent = `${money(data.on_account)} received but not yet linked to any IPO (advance / on account).`;
       note.classList.remove("hidden");
     } else note.classList.add("hidden");
 
@@ -691,7 +715,7 @@
             ${esc(i.ipo_name || (i.entry_type === "Adjustment" ? "Adjustment" : "—"))}
             ${breakdownBtn(acct.account_type, acct.account_id, i.ipo_id, key)}
           </div>
-          <div class="text-xs text-slate-500">${esc(i.direction)}${i.notes ? " · " + esc(i.notes) : ""}</div>
+          <div class="text-xs text-slate-500">${esc(i.direction || "")}${i.notes ? " · " + esc(i.notes) : ""}</div>
         </td>
         <td class="px-3 py-3 text-slate-600">${esc((i.entry_date || "").slice(0, 10))}</td>
         <td class="px-3 py-3 text-right ${amountClass(i.amount)}">${money(Math.abs(i.amount))}</td>
@@ -710,7 +734,7 @@
           const editable = isAdmin && e.entry_type !== "Settlement";
           return `<tr class="hover:bg-slate-50">
             <td class="px-3 py-2 text-slate-600">${esc((e.entry_date || "").slice(0, 10))}</td>
-            <td class="px-3 py-2 font-medium">${esc(e.entry_type)}</td>
+            <td class="px-3 py-2 font-medium">${esc(entryLabel(e.entry_type))}</td>
             <td class="px-3 py-2 text-slate-600">${esc(e.ipo_name || "—")}</td>
             <td class="px-3 py-2 text-right font-medium ${amountClass(e.amount)}">${money(e.amount)}</td>
             <td class="px-3 py-2 text-right text-slate-500">${money(e.running_balance)}</td>
@@ -864,9 +888,9 @@
       el.innerHTML = '<span class="text-rose-700 font-semibold">Mixed directions — deselect one side.</span>';
     } else {
       el.innerHTML = (t.receive > 0.005
-        ? `<span class="text-emerald-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to collect</span>`
-        : `<span class="text-rose-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to give</span>`)
-        + (t.accounts > 1 ? ` <span class="text-slate-400">· across ${t.accounts} accounts</span>` : "");
+        ? `<span class="text-emerald-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to collect from them</span>`
+        : `<span class="text-rose-700 font-semibold">${money(total)}</span> <span class="text-slate-500">to pay them</span>`)
+        + (t.accounts > 1 ? ` <span class="text-slate-400">· across ${t.accounts} people</span>` : "");
     }
 
     // A part-payment can only be split sensibly against a single account.
@@ -874,6 +898,7 @@
     $("barAmountWrap").classList.toggle("hidden", !onePerson);
     if (onePerson && !mixed) $("barAmount").value = total.toFixed(2);
     $("barSubmit").disabled = mixed;
+    $("barSubmit").textContent = t.receive > 0.005 ? "Record money in" : "Record money out";
     $("barSubmit").classList.toggle("opacity-40", mixed);
   }
 
@@ -1159,8 +1184,8 @@
 
     $("editDelete").addEventListener("click", async (e) => {
       const entry = state.editing;
-      if (!confirm(`Delete this ${entry.entry_type} of ${money(Math.abs(entry.amount))}?\n\n` +
-                   "Whatever it paid off becomes pending again.")) return;
+      if (!confirm(`Delete this ${entryLabel(entry.entry_type)} of ${money(Math.abs(entry.amount))}?\n\n` +
+                   "Anything it cleared will show as pending again.")) return;
       const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Deleting…" });
       try {
         const r = await TradeSlip.apiFetch(`/api/ipo/ledger/entries/${encodeURIComponent(entry.id)}`, { method: "DELETE" });

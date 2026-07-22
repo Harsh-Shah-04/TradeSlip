@@ -13,8 +13,8 @@ Entries are of two kinds:
   through `ipo_ledger_allocations`. A payment may also sit unallocated ("on
   account").
 
-Sign convention on `amount` is unchanged: **+ receivable** (they owe us),
-**− payable** (we owe them). Allocation amounts are always positive magnitudes;
+Sign convention on `amount` is unchanged: **+ collect** (money coming in),
+**− pay them** (money going out). Allocation amounts are always positive magnitudes;
 the direction comes from the charge they clear.
 """
 
@@ -107,16 +107,16 @@ def charge_status(amount: float, allocated: float) -> str:
 
 
 def charge_direction(amount: float) -> str:
-    """Which way a charge moves money, in the operator's words."""
+    """Which way a charge moves money, in the trader's words."""
     if abs(float(amount)) < EPSILON:
-        return "Settled"
-    return "To receive" if float(amount) > 0 else "To pay"
+        return "Cleared"
+    return "Collect" if float(amount) > 0 else "Pay them"
 
 
 def balance_direction(balance: float) -> str:
     if abs(float(balance)) < EPSILON:
-        return "Settled"
-    return "Receivable" if float(balance) > 0 else "Payable"
+        return "Cleared"
+    return "Collect" if float(balance) > 0 else "Pay them"
 
 
 def _outstanding(amount: float, allocated: float) -> float:
@@ -319,7 +319,7 @@ def ledger_overview(side: str = "buyer", *, include_settled: bool = False) -> di
             continue
         accounts.append(record)
 
-    # Anything owed for longest first, then biggest outstanding.
+    # Biggest pending first, then by name.
     accounts.sort(key=lambda a: (-abs(float(a["balance"])), (a["name"] or "").lower()))
     totals = {
         "to_receive": float(_money(sum(a["to_receive"] for a in accounts))),
@@ -679,6 +679,120 @@ def post_settlement_entries(
     return created
 
 
+def settlement_revision_deltas(
+    *,
+    posted: dict[str, float],
+    desired: dict[str, float],
+) -> dict[str, float]:
+    """Pure: Adjustment amount per account so posted + delta = desired.
+
+    Accounts with an unchanged net are omitted. Accounts that disappear from
+    the new settlement get a full reversing delta (−posted).
+    """
+    keys = set(posted) | set(desired)
+    out: dict[str, float] = {}
+    for key in keys:
+        old = float(posted.get(key) or 0)
+        new = float(desired.get(key) or 0)
+        delta = float(_money(new) - _money(old))
+        if abs(delta) < EPSILON:
+            continue
+        out[key] = delta
+    return out
+
+
+def _posted_settlement_nets_for_ipo(ipo_id: str) -> tuple[dict[str, float], dict[str, float]]:
+    """Sum of Settlement + settlement_revision Adjustments already on the ledger for this IPO.
+
+    Manual adjustments (reference_type=manual) are intentionally excluded so
+    business-logic revisions never clobber write-offs or opening balances.
+    """
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/{LEDGER_TABLE}",
+        headers=_service_headers(),
+        params={
+            "ipo_id": f"eq.{ipo_id}",
+            "select": "party_id,sell_party_id,entry_type,reference_type,amount",
+            "limit": "20000",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Load posted settlement nets failed ({response.status_code}): {response.text[:300]}"
+        )
+    party: dict[str, float] = defaultdict(float)
+    sell: dict[str, float] = defaultdict(float)
+    for row in response.json() or []:
+        entry_type = row.get("entry_type") or ""
+        ref = row.get("reference_type") or ""
+        keep = (entry_type == "Settlement" and ref == "settlement") or (
+            entry_type == "Adjustment" and ref == "settlement_revision"
+        )
+        if not keep:
+            continue
+        amount = float(row.get("amount") or 0)
+        if row.get("sell_party_id"):
+            sell[str(row["sell_party_id"])] += amount
+        elif row.get("party_id"):
+            party[str(row["party_id"])] += amount
+    return (
+        {k: float(_money(v)) for k, v in party.items()},
+        {k: float(_money(v)) for k, v in sell.items()},
+    )
+
+
+def post_settlement_revisions(
+    *,
+    ipo_id: str,
+    settlement_id: str,
+    party_nets: dict[str, float],
+    sell_party_nets: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Append-only corrections so ledger totals match the latest settlement math.
+
+    Never overwrites Settlement / Payment / manual Adjustment rows. Posts one
+    Adjustment (reference_type=settlement_revision) per account whose desired
+    net differs from what is already posted for this IPO.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    posted_party, posted_sell = _posted_settlement_nets_for_ipo(ipo_id)
+    party_deltas = settlement_revision_deltas(posted=posted_party, desired=party_nets or {})
+    sell_deltas = settlement_revision_deltas(
+        posted=posted_sell, desired=sell_party_nets or {}
+    )
+    created: list[dict[str, Any]] = []
+    for account_type, deltas in (
+        (ACCOUNT_PARTY, party_deltas),
+        (ACCOUNT_SELL_PARTY, sell_deltas),
+    ):
+        for account_id, delta in deltas.items():
+            posted_map = posted_party if account_type == ACCOUNT_PARTY else posted_sell
+            desired_map = (
+                (party_nets or {})
+                if account_type == ACCOUNT_PARTY
+                else (sell_party_nets or {})
+            )
+            posted = posted_map.get(account_id, 0.0)
+            desired = desired_map.get(account_id, 0.0)
+            created.append(
+                _append_entry(
+                    account_type=account_type,
+                    account_id=account_id,
+                    amount=float(delta),
+                    entry_type="Adjustment",
+                    entry_date=today,
+                    notes=(
+                        f"Settlement revision: {float(posted):,.4f} → {float(desired):,.4f}"
+                    ),
+                    ipo_id=ipo_id,
+                    reference_type="settlement_revision",
+                    reference_id=settlement_id,
+                )
+            )
+    return created
+
+
 def pay_open_items(
     *,
     account_type: str,
@@ -889,9 +1003,9 @@ def add_adjustment(
 ) -> dict[str, Any]:
     """Manual charge: opening balance carried forward, write-off, discount, correction.
 
-    `amount` is signed the same way as everything else — **positive** means they
-    owe you more, **negative** means you owe them more. It becomes an open item,
-    so it can be part-paid and settled like any IPO charge.
+    `amount` is signed the same way as everything else — **positive** means
+    collect more from them, **negative** means pay them more. It becomes an
+    open item, so it can be part-paid and settled like any IPO charge.
     """
     if abs(float(amount)) < EPSILON:
         raise ValueError("Amount must not be zero.")
@@ -1013,9 +1127,9 @@ def build_statement_excel(
     ws.append(["Account", account_name or data["account"]["name"]])
     ws.append(["Side", "Sell party" if account_type == ACCOUNT_SELL_PARTY else "Client"])
     ws.append(["Net outstanding", data["balance"], data["direction"]])
-    ws.append(["To receive", data["to_receive"]])
-    ws.append(["To pay", data["to_pay"]])
-    ws.append(["Unapplied payments", data["on_account"]])
+    ws.append(["Collect", data["to_receive"]])
+    ws.append(["Pay them", data["to_pay"]])
+    ws.append(["Advance (not linked to IPO yet)", data["on_account"]])
     ws.append([])
     ws.append(["IPO", "Date", "Amount", "Paid", "Outstanding", "Status", "Direction"])
     for item in data["open_items"]:
@@ -1057,7 +1171,7 @@ def build_overview_excel(side: str = "buyer", *, include_settled: bool = False) 
     wb = Workbook()
     ws = wb.active
     ws.title = "Sellers" if data["account_type"] == ACCOUNT_SELL_PARTY else "Clients"
-    ws.append(["Name", "Open IPOs", "To receive", "To pay", "Net", "Direction", "Last activity"])
+    ws.append(["Name", "Pending IPOs", "Collect", "Pay them", "Net pending", "Direction", "Last activity"])
     for a in data["accounts"]:
         ws.append(
             [

@@ -4,7 +4,7 @@
 {% block content %}
 <header class="mb-6">
   <h1 class="text-3xl font-bold text-slate-900">Settlement & Reports</h1>
-  <p class="text-slate-600 mt-1">See both sides: what to <strong>give</strong> buy parties (clients), and what to <strong>take</strong> from sell parties (Ambica, Mama, …). Finalize posts Client Ledger for buy parties.</p>
+  <p class="text-slate-600 mt-1">See both sides: what to <strong>give</strong> buy parties (clients), and what to <strong>take</strong> from sell parties (Ambica, Mama, …). Finalize posts Client Ledger. If already finalized, Finalize posts <strong>revision Adjustments</strong> only for differences — history stays intact.</p>
 </header>
 
 {% if not is_admin %}
@@ -517,16 +517,29 @@
     }
     draftId = payload.id;
     renderPreview(payload);
-    document.getElementById("finalizeBtn").disabled = payload.status === "Finalized";
+    document.getElementById("finalizeBtn").disabled = !draftId;
+    const finBtn = document.getElementById("finalizeBtn");
+    if (payload.status === "Finalized") {
+      finBtn.textContent = "Post revision to ledger";
+    } else {
+      finBtn.textContent = "Finalize & post ledger";
+    }
     const exp = document.getElementById("exportLink");
     exp.href = `/api/ipo/settlements/${encodeURIComponent(draftId)}/export.xlsx`;
     exp.classList.remove("hidden");
-    document.getElementById("statusMsg").textContent = `Draft ${payload.status}: ${draftId}`;
+    const revNote = payload.is_revision
+      ? " Finalized IPO — save refreshed the snapshot; Finalize will post Adjustments only for differences."
+      : "";
+    document.getElementById("statusMsg").textContent = `Draft ${payload.status}: ${draftId}.${revNote}`;
   });
 
   document.getElementById("finalizeBtn").addEventListener("click", async () => {
     if (!draftId) return;
-    if (!confirm("Finalize settlement and post ledger entries? This cannot be undone easily.")) return;
+    const wasFinalized = previewData && previewData.status === "Finalized";
+    const msg = wasFinalized
+      ? "Post settlement revision Adjustments for accounts that changed?\n\nExisting Settlement, Payment, and manual Adjustment rows will NOT be overwritten or deleted."
+      : "Finalize settlement and post ledger entries? This cannot be undone easily.";
+    if (!confirm(msg)) return;
     const response = await TradeSlip.apiFetch(`/api/ipo/settlements/${encodeURIComponent(draftId)}/finalize`, {
       method: "POST",
     });
@@ -536,8 +549,19 @@
       return;
     }
     renderPreview(payload);
-    document.getElementById("finalizeBtn").disabled = true;
-    document.getElementById("statusMsg").textContent = "Finalized and posted to Client Ledger.";
+    draftId = payload.id || draftId;
+    const finBtn = document.getElementById("finalizeBtn");
+    finBtn.disabled = false;
+    finBtn.textContent = "Post revision to ledger";
+    const n = payload.revisions_posted;
+    document.getElementById("statusMsg").textContent = payload.revision
+      ? (n
+          ? `Posted ${n} settlement revision Adjustment(s). Ledger history preserved.`
+          : "Ledger already matches current settlement — no Adjustments needed.")
+      : "Finalized and posted to Client Ledger.";
+    if ((payload.warnings || []).length) {
+      alert((payload.warnings || []).join("\n"));
+    }
   });
 
   loadIpos().catch((e) => { document.getElementById("statusMsg").textContent = e.message; });

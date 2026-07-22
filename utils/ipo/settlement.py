@@ -13,7 +13,7 @@ from openpyxl import Workbook
 
 from utils.ipo.allotments import list_allotments_raw
 from utils.ipo.categories import application_amount_from_ipo, is_premium, is_subject2
-from utils.ipo.ledger import post_settlement_entries
+from utils.ipo.ledger import post_settlement_entries, post_settlement_revisions
 from utils.ipo.models import (
     settlement_line_to_json,
     settlement_to_json,
@@ -867,6 +867,7 @@ def create_or_refresh_draft(ipo_id: str, broker_id: str, notes: str = "") -> dic
     preview = preview_settlement(ipo_id)
     ipo = preview["ipo"]
     draft_id = None
+    is_revision = False
     if existing.status_code == 200 and isinstance(existing.json(), list) and existing.json():
         draft_id = str(existing.json()[0]["id"])
         # wipe lines
@@ -888,40 +889,63 @@ def create_or_refresh_draft(ipo_id: str, broker_id: str, notes: str = "") -> dic
             timeout=HTTP_TIMEOUT,
         )
     else:
-        # Block if already finalized
+        # Already finalized → refresh that settlement's lines for a revision
+        # (ledger stays append-only; Finalize posts Adjustments for the delta).
         fin = _http().get(
             f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
             headers=_service_headers(),
             params={
                 "ipo_id": f"eq.{ipo_id}",
                 "status": "eq.Finalized",
-                "select": "id",
+                "select": "*",
                 "limit": "1",
             },
             timeout=HTTP_TIMEOUT,
         )
         if fin.status_code == 200 and isinstance(fin.json(), list) and fin.json():
-            raise ValueError("This IPO already has a finalized settlement.")
-        create = _http().post(
-            f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
-            headers=_service_headers(
-                {"Content-Type": "application/json", "Prefer": "return=representation"}
-            ),
-            json={
-                "ipo_id": ipo_id,
-                "broker_id": broker_id,
-                "status": "Draft",
-                "listing_price_used": ipo.get("listing_price"),
-                "notes": notes or "",
-                "updated_at": _now(),
-            },
-            timeout=HTTP_TIMEOUT,
-        )
-        if create.status_code not in (200, 201):
-            raise RuntimeError(f"Create settlement failed ({create.status_code}): {create.text[:300]}")
-        data = create.json()
-        created = data[0] if isinstance(data, list) else data
-        draft_id = str(created["id"])
+            fin_row = fin.json()[0]
+            draft_id = str(fin_row["id"])
+            is_revision = True
+            _http().delete(
+                f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
+                headers=_service_headers({"Prefer": "return=minimal"}),
+                params={"settlement_id": f"eq.{draft_id}"},
+                timeout=HTTP_TIMEOUT,
+            )
+            _http().patch(
+                f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+                headers=_service_headers({"Content-Type": "application/json"}),
+                params={"id": f"eq.{draft_id}"},
+                json={
+                    "listing_price_used": ipo.get("listing_price"),
+                    "notes": notes or fin_row.get("notes") or "",
+                    "updated_at": _now(),
+                },
+                timeout=HTTP_TIMEOUT,
+            )
+        else:
+            create = _http().post(
+                f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+                headers=_service_headers(
+                    {"Content-Type": "application/json", "Prefer": "return=representation"}
+                ),
+                json={
+                    "ipo_id": ipo_id,
+                    "broker_id": broker_id,
+                    "status": "Draft",
+                    "listing_price_used": ipo.get("listing_price"),
+                    "notes": notes or "",
+                    "updated_at": _now(),
+                },
+                timeout=HTTP_TIMEOUT,
+            )
+            if create.status_code not in (200, 201):
+                raise RuntimeError(
+                    f"Create settlement failed ({create.status_code}): {create.text[:300]}"
+                )
+            data = create.json()
+            created = data[0] if isinstance(data, list) else data
+            draft_id = str(created["id"])
 
     line_rows = []
     for line in preview["lines"]:
@@ -969,16 +993,124 @@ def create_or_refresh_draft(ipo_id: str, broker_id: str, notes: str = "") -> dic
     out["sell_party_summary"] = preview.get("sell_party_summary") or []
     out["sell_lines"] = preview.get("sell_lines") or []
     out["sell_party_totals"] = preview.get("sell_party_totals") or {}
+    out["is_revision"] = is_revision
+    if is_revision:
+        out["warnings"] = list(
+            dict.fromkeys(
+                (out.get("warnings") or [])
+                + [
+                    "This IPO is already finalized. Saving refreshed the settlement snapshot. "
+                    "Click Finalize again to post only ledger Adjustments for the differences — "
+                    "existing Settlement, Payment, and manual Adjustment rows stay untouched."
+                ]
+            )
+        )
     return out
 
 
 def finalize_settlement(settlement_id: str) -> dict[str, Any]:
     row = _get_settlement(settlement_id)
-    if row.get("status") == "Finalized":
-        return get_settlement(settlement_id)
     lines = _list_lines(settlement_id)
     if not lines:
         raise ValueError("Settlement has no lines. Save a draft first.")
+
+    ipo_id = str(row["ipo_id"])
+    party_nets = _settlement_party_nets(lines)
+    sell_party_nets = _sell_party_ledger_nets(ipo_id)
+
+    # Already finalized → append-only revision (Adjustments for deltas only).
+    if row.get("status") == "Finalized":
+        # Refresh lines from current business logic so the snapshot matches the ledger target.
+        preview = preview_settlement(ipo_id)
+        _http().delete(
+            f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
+            headers=_service_headers({"Prefer": "return=minimal"}),
+            params={"settlement_id": f"eq.{settlement_id}"},
+            timeout=HTTP_TIMEOUT,
+        )
+        line_rows = []
+        for line in preview["lines"]:
+            line_rows.append(
+                {
+                    "settlement_id": settlement_id,
+                    "allotment_id": line.get("allotment_id"),
+                    "party_id": line.get("party_id"),
+                    "applicant_id": line.get("applicant_id"),
+                    "position_id": line.get("position_id"),
+                    "party_name": line.get("party_name") or "",
+                    "applicant_name": line.get("applicant_name") or "",
+                    "pan": line.get("pan") or "",
+                    "dpid": line.get("dpid") or "",
+                    "sub_category": line.get("sub_category") or "",
+                    "application_amount": line.get("application_amount"),
+                    "vyaj": line["vyaj"],
+                    "applied": line["applied"],
+                    "allotted_apps": line["allotted_apps"],
+                    "shares_allotted": line["shares_allotted"],
+                    "sell_premium": line["sell_premium"],
+                    "sell_amt": line["sell_amt"],
+                    "net_pl": line["net_pl"],
+                    "direction": line["direction"],
+                }
+            )
+        for i in range(0, len(line_rows), 100):
+            chunk = line_rows[i : i + 100]
+            if not chunk:
+                continue
+            resp = _http().post(
+                f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
+                headers=_service_headers(
+                    {"Content-Type": "application/json", "Prefer": "return=minimal"}
+                ),
+                json=chunk,
+                timeout=HTTP_TIMEOUT,
+            )
+            if resp.status_code not in (200, 201):
+                raise RuntimeError(
+                    f"Refresh settlement lines failed ({resp.status_code}): {resp.text[:300]}"
+                )
+        party_nets = _settlement_party_nets(_list_lines(settlement_id))
+        sell_party_nets = _sell_party_ledger_nets(ipo_id)
+        revisions = post_settlement_revisions(
+            ipo_id=ipo_id,
+            settlement_id=settlement_id,
+            party_nets=party_nets,
+            sell_party_nets=sell_party_nets,
+        )
+        _http().patch(
+            f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{settlement_id}"},
+            json={"updated_at": _now()},
+            timeout=HTTP_TIMEOUT,
+        )
+        out = get_settlement(settlement_id)
+        out["revision"] = True
+        out["revisions_posted"] = len(revisions)
+        out["revision_entries"] = revisions
+        out["sell_party_summary"] = preview.get("sell_party_summary") or []
+        out["sell_lines"] = preview.get("sell_lines") or []
+        out["sell_party_totals"] = preview.get("sell_party_totals") or {}
+        out["grey_market_brokerage"] = preview.get("grey_market_brokerage")
+        out["warnings"] = preview.get("warnings") or []
+        if revisions:
+            out["warnings"] = list(
+                dict.fromkeys(
+                    (out.get("warnings") or [])
+                    + [
+                        f"Posted {len(revisions)} settlement revision Adjustment(s). "
+                        "Prior Settlement and Payment rows were not changed."
+                    ]
+                )
+            )
+        else:
+            out["warnings"] = list(
+                dict.fromkeys(
+                    (out.get("warnings") or [])
+                    + ["Ledger already matches the current settlement — no Adjustments needed."]
+                )
+            )
+        return out
 
     patch = _http().patch(
         f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
@@ -994,12 +1126,12 @@ def finalize_settlement(settlement_id: str) -> dict[str, Any]:
     if patch.status_code not in (200, 204):
         raise RuntimeError(f"Finalize failed ({patch.status_code}): {patch.text[:300]}")
 
-    # Post ledger: one entry per party for this settlement
+    # First finalize: one Settlement entry per party.
     post_settlement_entries(
-        ipo_id=str(row["ipo_id"]),
+        ipo_id=ipo_id,
         settlement_id=settlement_id,
-        party_nets=_settlement_party_nets(lines),
-        sell_party_nets=_sell_party_ledger_nets(str(row["ipo_id"])),
+        party_nets=party_nets,
+        sell_party_nets=sell_party_nets,
     )
     return get_settlement(settlement_id)
 

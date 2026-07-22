@@ -62,12 +62,12 @@ def test_charge_status_ignores_sign():
 
 
 def test_charge_and_balance_direction():
-    assert charge_direction(824) == "To receive"
-    assert charge_direction(-824) == "To pay"
-    assert charge_direction(0) == "Settled"
-    assert balance_direction(824) == "Receivable"
-    assert balance_direction(-824) == "Payable"
-    assert balance_direction(0) == "Settled"
+    assert charge_direction(824) == "Collect"
+    assert charge_direction(-824) == "Pay them"
+    assert charge_direction(0) == "Cleared"
+    assert balance_direction(824) == "Collect"
+    assert balance_direction(-824) == "Pay them"
+    assert balance_direction(0) == "Cleared"
 
 
 def test_outstanding_never_goes_negative():
@@ -428,6 +428,37 @@ def test_sell_party_ledger_nets_skips_parties_missing_from_master(monkeypatch):
     )
     monkeypatch.setattr(settlement, "sell_party_ids_by_name", lambda names: {})
     assert settlement._sell_party_ledger_nets("ipo-1") == {}
+
+
+def test_settlement_revision_deltas_kalpesh_example():
+    # Old posted receivable 9,300 → correct 5,370 → Adjustment −3,930.
+    from utils.ipo.ledger import settlement_revision_deltas
+
+    deltas = settlement_revision_deltas(
+        posted={"kalpesh": 9300.0},
+        desired={"kalpesh": 5370.0},
+    )
+    assert deltas["kalpesh"] == pytest.approx(-3930.0)
+    assert len(deltas) == 1
+
+
+def test_settlement_revision_deltas_skips_unchanged_and_reverses_removed():
+    from utils.ipo.ledger import settlement_revision_deltas
+
+    deltas = settlement_revision_deltas(
+        posted={"a": 1000.0, "b": -500.0, "c": 200.0},
+        desired={"a": 1000.0, "b": -800.0},
+    )
+    assert "a" not in deltas
+    assert deltas["b"] == pytest.approx(-300.0)
+    assert deltas["c"] == pytest.approx(-200.0)
+
+
+def test_settlement_revision_deltas_adds_new_accounts():
+    from utils.ipo.ledger import settlement_revision_deltas
+
+    deltas = settlement_revision_deltas(posted={}, desired={"new": 1500.0})
+    assert deltas["new"] == pytest.approx(1500.0)
 
 
 def test_balance_equals_open_items_minus_on_account():
