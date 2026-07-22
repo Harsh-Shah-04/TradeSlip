@@ -578,7 +578,14 @@ def sell_to_json(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def allotment_to_json(row: dict[str, Any]) -> dict[str, Any]:
+    from utils.ipo.categories import is_premium
+
     applicant = row.get("ipo_applicants")
+    position = row.get("ipo_positions") if isinstance(row.get("ipo_positions"), dict) else {}
+    category = position.get("category") or ""
+    premium = is_premium(category) or (
+        row.get("applicant_id") is None and bool(row.get("position_id"))
+    )
     party = None
     applicant_out = None
     if isinstance(applicant, dict):
@@ -596,12 +603,17 @@ def allotment_to_json(row: dict[str, Any]) -> dict[str, Any]:
             "party_id": str(applicant.get("party_id") or (party or {}).get("id") or ""),
             "party": party,
         }
+    party_name = ""
+    if party and party.get("name"):
+        party_name = party["name"]
+    elif position.get("party"):
+        party_name = str(position.get("party") or "")
     orphaned = row.get("position_id") is None
     return {
         "id": str(row.get("id") or ""),
         "ipo_id": str(row.get("ipo_id") or ""),
         "position_id": None if row.get("position_id") is None else str(row.get("position_id")),
-        "applicant_id": str(row.get("applicant_id") or ""),
+        "applicant_id": None if row.get("applicant_id") is None else str(row.get("applicant_id")),
         "broker_id": str(row.get("broker_id") or ""),
         "sub_category": row.get("sub_category") or "",
         "cost_per_app": _optional_float(row.get("cost_per_app")),
@@ -615,6 +627,10 @@ def allotment_to_json(row: dict[str, Any]) -> dict[str, Any]:
         "orphaned": orphaned,
         "notes": row.get("notes") or "",
         "applicant": applicant_out,
+        "is_premium": premium,
+        "line_type": "Premium" if premium else "Application",
+        "party_name": party_name,
+        "buy_rate": _optional_float(position.get("buy_rate")),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
     }

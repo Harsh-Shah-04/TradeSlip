@@ -98,6 +98,34 @@
   </div>
 </section>
 
+<section class="bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden mt-4">
+  <div class="border-b border-violet-100 bg-violet-50/60 px-4 py-3">
+    <h2 class="font-semibold text-violet-950">Premium positions — listing sale</h2>
+    <p class="text-xs text-violet-800 mt-0.5">Shares are already fixed. Record the actual listing sold price (same as Subject 2). No Allotted / Not Allotted status. Use common price + Mark Sold above.</p>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-violet-50/80 text-xs uppercase text-violet-900">
+        <tr>
+          <th class="px-3 py-2 w-10">
+            <input type="checkbox" id="selectAllPremium" class="h-4 w-4 rounded border-slate-300 text-violet-700 focus:ring-violet-600" aria-label="Select all premium" />
+          </th>
+          <th class="px-3 py-2">Party</th>
+          <th class="px-3 py-2 text-right">Shares</th>
+          <th class="px-3 py-2 text-right">Buy rate</th>
+          <th class="px-3 py-2 text-right">Listing sold price</th>
+          <th class="px-3 py-2 text-right">Market value</th>
+          <th class="px-3 py-2">Sold</th>
+          <th class="px-3 py-2">Sold date</th>
+        </tr>
+      </thead>
+      <tbody id="premiumBody" class="divide-y divide-slate-100">
+        <tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">No Premium positions loaded yet. Click Load Applicants.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <!-- Set shares modal — one input per Sub-Category -->
 <div id="sharesModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 px-4">
   <div class="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="sharesModalTitle">
@@ -190,7 +218,12 @@
   }
 
   function partyName(r) {
+    if (r.party_name) return r.party_name;
     return (r.applicant && r.applicant.party && r.applicant.party.name) || "—";
+  }
+
+  function isPremiumRow(r) {
+    return !!(r && (r.is_premium || r.line_type === "Premium"));
   }
 
   function commonPrice() {
@@ -378,6 +411,82 @@
     });
   }
 
+  function paintPremiumTable(premiumRows, pricePlaceholder) {
+    const body = document.getElementById("premiumBody");
+    if (!premiumRows.length) {
+      body.innerHTML =
+        '<tr><td colspan="8" class="px-4 py-6 text-center text-slate-500">No Premium positions for this IPO (or not loaded yet — click Load Applicants).</td></tr>';
+      return;
+    }
+    body.innerHTML = premiumRows
+      .map((raw) => {
+        const r = rowView(raw);
+        const party = partyName(raw);
+        const dirty = r.dirty
+          ? ' <span class="text-[10px] uppercase tracking-wide text-amber-700 font-semibold">edited</span>'
+          : "";
+        const checked = selectedIds.has(raw.id) ? "checked" : "";
+        const overrideVal = r.listing_price_override != null ? r.listing_price_override : "";
+        const value = rowValue(raw);
+        const soldLabel = raw.is_sold
+          ? `<span class="text-emerald-700 font-medium">Yes</span>`
+          : `<span class="text-slate-500">No</span>`;
+        const soldDate = raw.sold_at ? String(raw.sold_at).slice(0, 10) : "—";
+        return `<tr class="hover:bg-violet-50/40 ${r.dirty ? "bg-amber-50/40" : ""}" data-id="${TradeSlip.escapeHtml(raw.id)}">
+          <td class="px-3 py-2">
+            <input type="checkbox" class="row-cb premium-cb h-4 w-4 rounded border-slate-300 text-violet-700 focus:ring-violet-600" value="${TradeSlip.escapeHtml(raw.id)}" ${checked} />
+          </td>
+          <td class="px-3 py-2 font-medium text-violet-950">${TradeSlip.escapeHtml(party)}${dirty}</td>
+          <td class="px-3 py-2 text-right font-medium">${fmt(r.shares_allotted)}</td>
+          <td class="px-3 py-2 text-right">${raw.buy_rate != null ? fmt(raw.buy_rate) : "—"}</td>
+          <td class="px-3 py-2 text-right">
+            <input type="number" min="0" step="any" class="price-inp w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm" value="${overrideVal}" placeholder="${TradeSlip.escapeHtml(pricePlaceholder)}" title="Leave blank to use common sold price" />
+          </td>
+          <td class="px-3 py-2 text-right font-semibold text-slate-800">${value == null ? "—" : fmt(value)}</td>
+          <td class="px-3 py-2">${soldLabel}</td>
+          <td class="px-3 py-2 text-slate-600">${TradeSlip.escapeHtml(soldDate)}</td>
+        </tr>`;
+      })
+      .join("");
+
+    body.querySelectorAll(".row-cb").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        if (cb.checked) selectedIds.add(cb.value);
+        else selectedIds.delete(cb.value);
+        updateSelectionUi();
+      });
+    });
+    body.querySelectorAll("tr[data-id]").forEach((tr) => {
+      const id = tr.dataset.id;
+      const inp = tr.querySelector(".price-inp");
+      if (!inp) return;
+      const commit = () => {
+        const raw = inp.value.trim();
+        if (raw === "") {
+          applyDraft(id, { listing_price_override: null });
+        } else {
+          const n = Number(raw);
+          if (!Number.isFinite(n) || n < 0) {
+            alert("Listing sold price must be a number 0 or more.");
+            paintTable(current);
+            return;
+          }
+          applyDraft(id, { listing_price_override: n });
+        }
+        paintTable(current);
+        if (drafts.has(id)) setStatus("Listing sold price updated on this page (not saved yet).", "success");
+        updateSaveBtn();
+      };
+      inp.addEventListener("change", commit);
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          inp.blur();
+        }
+      });
+    });
+  }
+
   function paintTable(data, { clearDrafts = false, clearSelection = false } = {}) {
     if (clearDrafts) drafts.clear();
     if (clearSelection) selectedIds.clear();
@@ -393,6 +502,7 @@
       ["Pending", c.pending],
       ["Allotted", c.allotted],
       ["Not Allotted", c.not_allotted],
+      ["Premium", c.premium],
       ["Sold", c.sold],
       ["Total", c.total],
     ]
@@ -413,7 +523,8 @@
       driftEl.textContent = "";
     }
 
-    const rows = sortedRows(data);
+    const rows = sortedRows(data).filter((r) => !isPremiumRow(r));
+    const premiumRows = sortedRows(data).filter((r) => isPremiumRow(r));
     const body = document.getElementById("allotBody");
     const common = commonPrice();
     const pricePlaceholder = common != null ? String(common) : "common";
@@ -423,18 +534,14 @@
         missing > 0
           ? `<tr><td colspan="10" class="px-4 py-8 text-center text-slate-600">
               <p class="font-semibold text-slate-800 mb-1">No applicants loaded yet</p>
-              <p class="text-sm">You have <strong>${missing}</strong> allocated applicant(s) on Positions.</p>
+              <p class="text-sm">You have <strong>${missing}</strong> allocated applicant(s) / Premium position(s) on Positions.</p>
               <p class="text-sm mt-1">Click <strong>Load Applicants</strong> to show them here.</p>
             </td></tr>`
           : '<tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">No fully allocated positions for this IPO yet. Allocate applicants on Positions first.</td></tr>';
-      updateSaveBtn();
-      updateSelectionUi();
-      return;
-    }
-
-    let lastParty = null;
-    const html = [];
-    rows.forEach((raw) => {
+    } else {
+      let lastParty = null;
+      const html = [];
+      rows.forEach((raw) => {
       const r = rowView(raw);
       const party = partyName(raw);
       if (party !== lastParty) {
@@ -487,8 +594,11 @@
         <td class="px-3 py-2 text-right font-semibold text-slate-800">${value == null ? "—" : fmt(value)}</td>
         <td class="px-3 py-2">${soldLabel}</td>
       </tr>`);
-    });
-    body.innerHTML = html.join("");
+      });
+      body.innerHTML = html.join("");
+    }
+
+    paintPremiumTable(premiumRows, pricePlaceholder);
 
     body.querySelectorAll(".row-cb").forEach((cb) => {
       cb.addEventListener("change", () => {
@@ -541,9 +651,9 @@
   }
 
   function openSharesModal(mode) {
-    const rows = selectedEditable();
+    const rows = selectedEditable().filter((r) => !isPremiumRow(r));
     if (!rows.length) {
-      alert("Select at least one applicant.");
+      alert("Select at least one application applicant (Premium shares are fixed).");
       return;
     }
     sharesModalMode = mode;
@@ -703,20 +813,36 @@
 
   document.getElementById("selectAll").addEventListener("change", (e) => {
     const on = e.target.checked;
-    editableRows().forEach((r) => {
-      if (on) selectedIds.add(r.id);
-      else selectedIds.delete(r.id);
+    editableRows()
+      .filter((r) => !isPremiumRow(r))
+      .forEach((r) => {
+        if (on) selectedIds.add(r.id);
+        else selectedIds.delete(r.id);
+      });
+    document.querySelectorAll("#allotBody .row-cb:not(:disabled)").forEach((cb) => {
+      cb.checked = on;
     });
-    document.querySelectorAll(".row-cb:not(:disabled)").forEach((cb) => {
+    updateSelectionUi();
+  });
+
+  document.getElementById("selectAllPremium").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    editableRows()
+      .filter((r) => isPremiumRow(r))
+      .forEach((r) => {
+        if (on) selectedIds.add(r.id);
+        else selectedIds.delete(r.id);
+      });
+    document.querySelectorAll("#premiumBody .row-cb:not(:disabled)").forEach((cb) => {
       cb.checked = on;
     });
     updateSelectionUi();
   });
 
   document.getElementById("bulkAllottedBtn").addEventListener("click", () => {
-    const rows = selectedEditable();
+    const rows = selectedEditable().filter((r) => !isPremiumRow(r));
     if (!rows.length) {
-      alert("Select at least one applicant.");
+      alert("Select at least one application applicant (Premium shares are already allotted).");
       return;
     }
     const needShares = rows.some((r) => !(Number(rowView(r).shares_allotted) > 0));
@@ -743,9 +869,9 @@
   });
 
   document.getElementById("bulkNotAllottedBtn").addEventListener("click", () => {
-    const rows = selectedEditable();
+    const rows = selectedEditable().filter((r) => !isPremiumRow(r));
     if (!rows.length) {
-      alert("Select at least one applicant.");
+      alert("Select at least one application applicant (Premium cannot be Not Allotted).");
       return;
     }
     rows.forEach((r) => applyDraft(r.id, notAllottedPatch()));

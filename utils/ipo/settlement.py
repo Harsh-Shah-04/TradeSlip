@@ -105,16 +105,29 @@ def _sell_side_financials(
         else float(_money(seller_vyaj) - _money(buyer_vyaj))
     )
     if premium:
-        # Premium has no listing-sale leg: the sell party owes the full trade amount.
+        # Premium mirrors Subject 2's three-price model:
+        #   Buy Rate  → Guaranteed = Shares × Buy Rate (client)
+        #   Sell Rate → Contract = grey sell amount (seller_vyaj) — Ambica/Mama
+        #   Sold Price→ Market = Shares × Listing Sold Price (listing_sell_amt)
+        # Client settles Guaranteed − Market only; sell rate is for contract + brokerage.
+        market = _money(listing_sell_amt)
+        guaranteed = _money(client_amount) if client_amount else _money(buyer_vyaj)
+        contract = _money(seller_vyaj)
+        difference = guaranteed - market
+        brokerage = (
+            float(_money(recorded_brokerage))
+            if recorded_brokerage is not None
+            else float(contract - guaranteed)
+        )
         return {
-            "sell_amt": 0.0,
-            "market_amount": float(_money(seller_vyaj)),
-            "vyaj": float(_money(seller_vyaj)),
-            "settlement_difference": brokerage,
+            "sell_amt": float(market),
+            "market_amount": float(market),
+            "vyaj": float(contract),
+            "settlement_difference": float(difference),
             "brokerage": brokerage,
             "profit": max(brokerage, 0.0),
             "loss": max(-brokerage, 0.0),
-            "net_pl": float(-_money(seller_vyaj)),
+            "net_pl": float(market - contract),
         }
     return {
         "sell_amt": float(_money(listing_sell_amt)),
@@ -149,7 +162,7 @@ def _build_line_from_allotment(
     row: dict[str, Any],
     ipo: dict[str, Any],
     positions: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     applicant = row.get("ipo_applicants") if isinstance(row.get("ipo_applicants"), dict) else {}
     party = applicant.get("ipo_parties") if isinstance(applicant.get("ipo_parties"), dict) else {}
     status = row.get("status") or "Pending"
@@ -157,6 +170,11 @@ def _build_line_from_allotment(
     allotted_apps = 1.0 if status == "Allotted" else 0.0
     position = (positions or {}).get(str(row.get("position_id") or "")) or {}
     subject2 = is_subject2(position.get("category"))
+    if is_premium(position.get("category")) or (
+        row.get("applicant_id") is None and bool(row.get("position_id"))
+    ):
+        # Premium listing rows are handled by _premium_buy_lines (avoids double-count).
+        return None
     s2_pending = False
     if subject2:
         # Subject 2 (guaranteed deal): the client sells the allotted shares at market
@@ -346,12 +364,16 @@ def _party_ids_by_name(names: list[str]) -> dict[str, str]:
 
 
 def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
-    """Premium positions owe the buy party the full buy amount (no listing leg)."""
+    """Premium buy lines from listing allotment rows (fallback to position if not seeded).
+
+    Like Subject 2: Guaranteed = Shares × Buy Rate, Market = Shares × Listing Sold
+    Price, client settles only the difference. Pending until listing sale is recorded.
+    """
     response = _http().get(
         f"{_supabase_url()}/rest/v1/ipo_positions",
         headers=_service_headers(),
         params={
-            "select": "id,party,category,buy_app,buy_amt",
+            "select": "id,party,party_id,category,buy_app,buy_amt,buy_rate",
             "ipo_id": f"eq.{ipo_id}",
             "limit": "5000",
         },
@@ -364,17 +386,50 @@ def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
     ]
     if not premium_positions:
         return []
+
+    allot_by_pos: dict[str, dict[str, Any]] = {}
+    for row in list_allotments_raw(ipo_id):
+        pid = str(row.get("position_id") or "")
+        if not pid or row.get("applicant_id") is not None:
+            continue
+        allot_by_pos[pid] = row
+
     party_ids = _party_ids_by_name([str(r.get("party") or "") for r in premium_positions])
     lines: list[dict[str, Any]] = []
     for pos in premium_positions:
         party = str(pos.get("party") or "").strip() or "—"
-        buy_amt = float(_money(pos.get("buy_amt")))
+        buy_rate = float(_money(pos.get("buy_rate")))
         shares = int(round(float(pos.get("buy_app") or 0)))
-        net_pl = float(-_money(buy_amt))
+        guaranteed = float(_money(shares) * _money(buy_rate)) if shares > 0 else 0.0
+        allot = allot_by_pos.get(str(pos.get("id") or ""))
+        premium_pending = False
+        if allot and allot.get("is_sold") and allot.get("sold_price") is not None:
+            market_rate = float(_money(allot.get("sold_price")))
+            shares = int(allot.get("shares_allotted") or shares)
+            guaranteed = float(_money(shares) * _money(buy_rate)) if shares > 0 else 0.0
+            sell_amt = float(_money(shares) * _money(market_rate))
+            sell_premium = market_rate
+            net_pl = float(_money(sell_amt) - _money(guaranteed))
+            is_sold = True
+            allotment_id = str(allot.get("id") or "") or None
+        elif shares <= 0:
+            sell_amt = sell_premium = net_pl = 0.0
+            is_sold = False
+            allotment_id = str(allot.get("id") or "") if allot else None
+        else:
+            # Listing sale not recorded yet — difference unknown.
+            premium_pending = True
+            sell_amt = sell_premium = net_pl = 0.0
+            is_sold = False
+            allotment_id = str(allot.get("id") or "") if allot else None
+        party_id = (
+            str(pos.get("party_id") or "")
+            or party_ids.get(party.casefold())
+        )
         lines.append(
             {
-                "allotment_id": None,
-                "party_id": party_ids.get(party.casefold()),
+                "allotment_id": allotment_id,
+                "party_id": party_id or None,
                 "applicant_id": None,
                 "position_id": str(pos.get("id") or "") or None,
                 "party_name": party,
@@ -383,19 +438,18 @@ def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
                 "dpid": "",
                 "sub_category": pos.get("category") or "Premium",
                 "application_amount": None,
-                "vyaj": buy_amt,
-                # Premium is share-qty, not IPO applications — mirror sell-side Applied.
+                "vyaj": guaranteed,
                 "applied": float(shares),
                 "allotted_apps": 0.0,
                 "shares_allotted": shares,
-                "sell_premium": 0.0,
-                # No listing-sale leg with the buy party; grey-market sell is Ambica's side.
-                "sell_amt": 0.0,
+                "sell_premium": sell_premium,
+                "sell_amt": sell_amt,
                 "net_pl": net_pl,
                 "direction": _direction(net_pl),
                 "status": "Premium",
-                "is_sold": True,
+                "is_sold": is_sold,
                 "is_premium": True,
+                "premium_pending": premium_pending,
                 "line_type": "Premium",
             }
         )
@@ -510,15 +564,38 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
             recorded_brokerage = s.get("brokerage")
 
             if premium:
+                # Premium: contract = grey sell amount; market from listing allotment
+                # sold price (same Subject-2 three-price split).
+                premium_rows = [
+                    r for r in allot_by_pos.get(pid, []) if r.get("applicant_id") is None
+                ]
+                if not premium_rows:
+                    premium_rows = allot_by_pos.get(pid, [])
+                shares_allotted = int(round(sell_qty))
+                market_amount = 0.0
+                for r in premium_rows:
+                    if (
+                        (r.get("status") or "") == "Allotted"
+                        and r.get("is_sold")
+                        and r.get("sold_price") is not None
+                    ):
+                        qty = int(r.get("shares_allotted") or 0)
+                        shares_allotted = qty or shares_allotted
+                        market_amount = float(
+                            _money(shares_allotted) * _money(r.get("sold_price"))
+                        )
+                        break
                 applied = sell_qty
                 allotted = 0.0
-                shares_allotted = int(round(sell_qty))
+                guaranteed_amount = float(_money(shares_allotted) * _money(buy_rate))
+                buyer_vyaj = guaranteed_amount
                 financials = _sell_side_financials(
-                    listing_sell_amt=0.0,
+                    listing_sell_amt=market_amount,
                     seller_vyaj=grey_sell_amt,
-                    buyer_vyaj=buyer_vyaj,
+                    buyer_vyaj=guaranteed_amount,
                     recorded_brokerage=recorded_brokerage,
                     premium=True,
+                    client_amount=guaranteed_amount,
                 )
             elif subject2:
                 # Subject 2 settles on allotted shares, never on applications.
@@ -657,7 +734,11 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
     rows = list_allotments_raw(ipo_id)
     positions = _positions_map(ipo_id)
-    lines = [_build_line_from_allotment(r, ipo, positions) for r in rows]
+    lines = [
+        line
+        for line in (_build_line_from_allotment(r, ipo, positions) for r in rows)
+        if line is not None
+    ]
     lines.extend(_premium_buy_lines(ipo_id))
     warnings: list[str] = []
     unsold = [l for l in lines if l["status"] == "Allotted" and not l["is_sold"]]
@@ -679,6 +760,12 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
         warnings.append(
             f"{len(s2_pending)} Subject 2 allotment(s) have no sold price recorded — "
             "mark them sold with the actual sold price (Allotments) to settle the difference."
+        )
+    premium_pending = [l for l in lines if l.get("premium_pending")]
+    if premium_pending:
+        warnings.append(
+            f"{len(premium_pending)} Premium position(s) have no listing sold price — "
+            "mark them sold on Allotments (Premium section) to settle the difference."
         )
     party = _party_summary(lines)
     sell_side = _grey_market_sell_side(ipo_id)

@@ -164,25 +164,40 @@ def test_application_sell_side_uses_seller_vyaj_and_separate_brokerage():
     }
 
 
-def test_premium_sell_side_is_receivable_from_sell_party():
+def test_premium_sell_side_uses_listing_market_and_contract():
+    # PINAL: 400 shares, buy 98, Ambica sell 99, listing sold 94.
+    # Contract 39,600; Market 37,600; Net = 37,600 − 39,600 = −2,000 Receivable.
+    # Brokerage = 39,600 − 39,200 = 400. Client difference = 39,200 − 37,600 = 1,600.
     amounts = _sell_side_financials(
-        listing_sell_amt=0,
-        seller_vyaj=3990,
-        buyer_vyaj=3610,
-        recorded_brokerage=380,
+        listing_sell_amt=400 * 94,
+        seller_vyaj=400 * 99,
+        buyer_vyaj=400 * 98,
+        recorded_brokerage=400,
         premium=True,
+        client_amount=400 * 98,
     )
-    assert amounts == {
-        "sell_amt": 0.0,
-        "market_amount": 3990.0,
-        "vyaj": 3990.0,
-        "settlement_difference": 380.0,
-        "brokerage": 380.0,
-        "profit": 380.0,
-        "loss": 0.0,
-        "net_pl": -3990.0,
-    }
+    assert amounts["sell_amt"] == pytest.approx(37600.0)
+    assert amounts["market_amount"] == pytest.approx(37600.0)
+    assert amounts["vyaj"] == pytest.approx(39600.0)
+    assert amounts["settlement_difference"] == pytest.approx(1600.0)
+    assert amounts["brokerage"] == pytest.approx(400.0)
+    assert amounts["net_pl"] == pytest.approx(-2000.0)
     assert _sell_side_direction(amounts["net_pl"]) == "Receivable"
+
+
+def test_premium_sell_side_client_pays_when_listing_above_guarantee():
+    # Listing 105 > buy 98 → client difference negative (client pays).
+    amounts = _sell_side_financials(
+        listing_sell_amt=400 * 105,
+        seller_vyaj=400 * 99,
+        buyer_vyaj=400 * 98,
+        recorded_brokerage=None,
+        premium=True,
+        client_amount=400 * 98,
+    )
+    assert amounts["settlement_difference"] == pytest.approx(-2800.0)
+    assert amounts["brokerage"] == pytest.approx(400.0)  # 39600 − 39200
+    assert amounts["net_pl"] == pytest.approx(400 * 105 - 400 * 99)  # market − contract
 
 
 def test_subject2_sell_side_net_is_market_minus_contract():

@@ -15,7 +15,7 @@ Difference = 0  → nothing is payable
 | -------------- | -------------------------- | ----------------------------------------- |
 | IPO Allotment  | Applications × Buy Rate    | Allotted Shares × Listing Sold Price      |
 | Subject 2      | Allotted Shares × Buy Rate | Allotted Shares × Allotment Sold Price    |
-| Premium        | Shares × Buy Rate          | Shares × Sell Rate                        |
+| Premium        | Shares × Buy Rate          | Shares × Listing Sold Price               |
 
 ---
 
@@ -90,41 +90,33 @@ proceeds; only the gap to the guarantee moves.
 
 ## 3. Premium (Direct Share Deal)
 
-There is no allotment — the share quantity is fixed at trade time.
+Shares are already fixed at trade time (no Pending / Not Allotted status). A
+Premium listing row is seeded on the Allotments page so the actual **Listing
+Sold Price** can be recorded — same role as Subject 2.
 
 - **Guaranteed** = Shares × Buy Rate
-- **Market** = Shares × Sell Rate
+- **Market** = Shares × Listing Sold Price (from Allotments)
+- **Contract with sell party** = Shares × Sell Rate (Ambica / Mama) — used only
+  for sell-side Vyaj and Brokerage = Contract − Guaranteed
+- **Client Difference** = Guaranteed − Market
 
 ### Example
 
-| Input     | Value   |
-| --------- | ------- |
-| Shares    | 1,000   |
-| Buy Rate  | ₹12     |
-| Sell Rate | ₹13     |
+| Input               | Value  |
+| ------------------- | ------ |
+| Shares              | 400    |
+| Buy Rate            | ₹98    |
+| Sell Rate (Ambica)  | ₹99    |
+| Listing Sold Price  | ₹94    |
 
-- Guaranteed = 1,000 × 12 = **₹12,000**
-- Market = 1,000 × 13 = **₹13,000**
-- Difference = 12,000 − 13,000 = **−₹1,000** → **Client pays ₹1,000**
+- Guaranteed = 400 × 98 = **₹39,200**
+- Market = 400 × 94 = **₹37,600**
+- Client Difference = 39,200 − 37,600 = **₹1,600** → **Seller pays Client**
+- Contract = 400 × 99 = **₹39,600** → sell-side Vyaj
+- Brokerage = 39,600 − 39,200 = **₹400**
 
-### In code — settled gross, on two legs
-
-Premium is the one category the system does **not** net into a single line. It
-books both legs at full value:
-
-- **Buy leg** ([settlement.py:347-402](../utils/ipo/settlement.py#L347-L402)):
-  `vyaj = buy_amt` (= Shares × Buy Rate = Guaranteed), `sell_amt = 0`,
-  `net_pl = −buy_amt` → **Payable**: the buy party is owed the full guaranteed
-  amount.
-- **Sell leg** ([settlement.py:106-117](../utils/ipo/settlement.py#L106-L117)):
-  `vyaj = market_amount = sell_amt of the sell trade` (= Shares × Sell Rate =
-  Market), `net_pl = −seller_vyaj` → **Receivable**: the sell party owes the
-  full market amount.
-- `brokerage = Market − Guaranteed = Shares × (Sell Rate − Buy Rate)`, which is
-  exactly the magnitude of the Difference above.
-
-So the net across the two legs equals the single-line Difference, but the
-statement shows ₹12,000 out and ₹13,000 in rather than a net ₹1,000.
+Until the listing sold price is marked on Allotments, the buy line stays
+pending (`net_pl = 0`).
 
 ---
 

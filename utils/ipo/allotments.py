@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from utils.ipo.categories import is_premium
 from utils.ipo.models import AllotmentUpdate, allotment_to_json
 from utils.ipo.service import get_ipo
 from utils.supabase_client import _service_headers, _supabase_url
@@ -128,10 +129,32 @@ def _live_allocation_pairs(ipo_id: str) -> list[dict[str, Any]]:
     return filtered
 
 
+def _premium_positions(ipo_id: str) -> list[dict[str, Any]]:
+    """Premium positions for this IPO (shares already fixed — no applicant allocation)."""
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+        headers=_service_headers(),
+        params={
+            "select": "id,ipo_id,broker_id,category,sub_category,buy_app,buy_amt,buy_rate,party,party_id",
+            "ipo_id": f"eq.{ipo_id}",
+            "limit": "5000",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Load positions failed ({response.status_code}): {response.text[:300]}")
+    return [
+        p
+        for p in (response.json() or [])
+        if is_premium(p.get("category")) and float(p.get("buy_app") or 0) > 0
+    ]
+
+
 def list_allotments_raw(ipo_id: str, *, include_archived: bool = False) -> list[dict[str, Any]]:
     params: dict[str, str] = {
         "select": (
             "*,ipo_applicants(id,name,pan,dpid,party_id,ipo_parties(id,name))"
+            ",ipo_positions(id,category,party,party_id,buy_rate,buy_app)"
         ),
         "ipo_id": f"eq.{ipo_id}",
         "order": "created_at.asc",
@@ -157,7 +180,10 @@ def get_allotment(allotment_id: str) -> dict[str, Any]:
         headers=_service_headers(),
         params={
             "id": f"eq.{allotment_id}",
-            "select": "*,ipo_applicants(id,name,pan,dpid,party_id,ipo_parties(id,name))",
+            "select": (
+                "*,ipo_applicants(id,name,pan,dpid,party_id,ipo_parties(id,name))"
+                ",ipo_positions(id,category,party,party_id,buy_rate,buy_app)"
+            ),
             "limit": "1",
         },
         timeout=HTTP_TIMEOUT,
@@ -173,13 +199,23 @@ def get_allotment(allotment_id: str) -> dict[str, Any]:
 def drift_report(ipo_id: str) -> dict[str, Any]:
     live = _live_allocation_pairs(ipo_id)
     live_keys = {_pair_key(p["position_id"], p["applicant_id"]) for p in live}
+    premium_ids = {str(p["id"]) for p in _premium_positions(ipo_id) if p.get("id")}
     allotments = list_allotments_raw(ipo_id, include_archived=False)
     allot_keys: set[str] = set()
+    premium_seeded: set[str] = set()
     orphaned: list[dict[str, Any]] = []
     for row in allotments:
         pid = row.get("position_id")
-        aid = str(row.get("applicant_id") or "")
-        key = _pair_key(str(pid) if pid else None, aid)
+        aid = row.get("applicant_id")
+        # Premium listing rows have no applicant — track separately.
+        if aid is None and pid is not None:
+            pid_s = str(pid)
+            if pid_s in premium_ids:
+                premium_seeded.add(pid_s)
+            else:
+                orphaned.append(allotment_to_json(row))
+            continue
+        key = _pair_key(str(pid) if pid else None, str(aid or ""))
         if pid is None or key not in live_keys:
             orphaned.append(allotment_to_json(row))
         else:
@@ -193,10 +229,12 @@ def drift_report(ipo_id: str) -> dict[str, Any]:
         for p in live
         if _pair_key(p["position_id"], p["applicant_id"]) not in allot_keys
     ]
+    missing_premium = sorted(premium_ids - premium_seeded)
     return {
-        "missing_count": len(missing),
+        "missing_count": len(missing) + len(missing_premium),
         "orphaned_count": len(orphaned),
         "missing": missing[:50],
+        "missing_premium": missing_premium[:50],
         "orphaned": orphaned[:50],
     }
 
@@ -204,12 +242,16 @@ def drift_report(ipo_id: str) -> dict[str, Any]:
 def list_allotments(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
     rows = [allotment_to_json(r) for r in list_allotments_raw(ipo_id)]
+    application_rows = [r for r in rows if not r.get("is_premium")]
+    premium_rows = [r for r in rows if r.get("is_premium")]
     drift = drift_report(ipo_id)
     counts = {
-        "pending": sum(1 for r in rows if r["status"] == "Pending"),
-        "allotted": sum(1 for r in rows if r["status"] == "Allotted"),
-        "not_allotted": sum(1 for r in rows if r["status"] == "Not Allotted"),
+        "pending": sum(1 for r in application_rows if r["status"] == "Pending"),
+        "allotted": sum(1 for r in application_rows if r["status"] == "Allotted"),
+        "not_allotted": sum(1 for r in application_rows if r["status"] == "Not Allotted"),
         "sold": sum(1 for r in rows if r["is_sold"]),
+        "premium": len(premium_rows),
+        "premium_sold": sum(1 for r in premium_rows if r["is_sold"]),
         "total": len(rows),
     }
     warnings: list[str] = []
@@ -218,6 +260,8 @@ def list_allotments(ipo_id: str) -> dict[str, Any]:
     return {
         "ipo": ipo,
         "allotments": rows,
+        "application_allotments": application_rows,
+        "premium_allotments": premium_rows,
         "counts": counts,
         "drift": drift,
         "warnings": warnings,
@@ -238,7 +282,12 @@ def seed_allotments(ipo_id: str) -> dict[str, Any]:
             str(r.get("applicant_id") or ""),
         )
         for r in existing
-        if r.get("position_id")
+        if r.get("position_id") and r.get("applicant_id") is not None
+    }
+    existing_premium_positions = {
+        str(r["position_id"])
+        for r in existing
+        if r.get("position_id") and r.get("applicant_id") is None
     }
 
     to_insert: list[dict[str, Any]] = []
@@ -267,6 +316,34 @@ def seed_allotments(ipo_id: str) -> dict[str, Any]:
         if p["cost_per_app"] is None:
             warnings.append(f"Position {p['position_id']}: buy_app invalid; cost_per_app null.")
 
+    # Premium: one Allotted row per position (shares already fixed).
+    for pos in _premium_positions(ipo_id):
+        pid = str(pos.get("id") or "")
+        if not pid or pid in existing_premium_positions:
+            continue
+        if not pos.get("broker_id"):
+            continue
+        shares = int(round(float(pos.get("buy_app") or 0)))
+        if shares <= 0:
+            continue
+        buy_rate = float(_money(pos.get("buy_rate"))) if pos.get("buy_rate") is not None else None
+        to_insert.append(
+            {
+                "ipo_id": ipo_id,
+                "position_id": pid,
+                "applicant_id": None,
+                "broker_id": str(pos["broker_id"]),
+                "sub_category": pos.get("sub_category") or "Share",
+                "cost_per_app": buy_rate,
+                "status": "Allotted",
+                "shares_allotted": shares,
+                "is_sold": False,
+                "is_archived": False,
+                "notes": "",
+                "updated_at": _now(),
+            }
+        )
+
     inserted = 0
     for i in range(0, len(to_insert), CHUNK):
         chunk = to_insert[i : i + CHUNK]
@@ -292,6 +369,8 @@ def seed_allotments(ipo_id: str) -> dict[str, Any]:
 
 def update_allotment(allotment_id: str, payload: AllotmentUpdate) -> dict[str, Any]:
     row = get_allotment(allotment_id)
+    position = row.get("ipo_positions") if isinstance(row.get("ipo_positions"), dict) else {}
+    premium = is_premium(position.get("category")) or row.get("applicant_id") is None
 
     status = payload.status if payload.status is not None else row.get("status")
     shares = (
@@ -299,6 +378,10 @@ def update_allotment(allotment_id: str, payload: AllotmentUpdate) -> dict[str, A
         if payload.shares_allotted is not None
         else int(row.get("shares_allotted") or 0)
     )
+    if premium:
+        # Premium shares are fixed at trade time — only listing price override can change.
+        status = "Allotted"
+        shares = int(row.get("shares_allotted") or shares)
     if status not in ("Pending", "Allotted", "Not Allotted"):
         raise ValueError("Status must be Pending, Allotted, or Not Allotted.")
     if status == "Allotted" and shares <= 0:

@@ -36,7 +36,7 @@
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b">
       <h2 class="font-semibold text-slate-900">Buy parties (clients) — give / settle</h2>
-      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Subject 2 settles only the difference: Net = Market (Shares × Allotment Sold Price) − Guaranteed (Shares × Buy Rate)</p>
+      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Subject 2 / Premium settle the difference: Net = Market (Shares × Listing Sold Price) − Guaranteed (Shares × Buy Rate)</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -63,7 +63,7 @@
   <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50/50">
       <h2 class="font-semibold text-emerald-950">Sell parties — take from (Ambica, Mama, …)</h2>
-      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Subject 2: Vyaj = contract (Shares × Sell Rate); Net = Market (Allotment Sold Price) − Contract → the balance receivable from the sell party · Premium / Subject 2 are separate</p>
+      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Subject 2 / Premium: Vyaj = contract (Shares × Sell Rate); Net = Market (Listing Sold Price) − Contract · Brokerage = Contract − Guaranteed</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -297,8 +297,8 @@
       ? visible.map((p) => {
           const active = filter.buyParty && sameBuy(p.party_name, filter.buyParty);
           const typeLabel = lineTypeOf(p);
-          // Premium has no listing-sale leg; Subject 2 shows the market sale amount
-          const sellAmtCell = typeLabel === "Premium" ? "—" : fmt(p.sell_amt);
+          // Premium & Subject 2 both show market amount from listing sold price
+          const sellAmtCell = fmt(p.sell_amt);
           const allottedCell = typeLabel === "Premium" ? "—" : fmt(p.allotted);
           return `<tr class="${rowBtnClass(active)}" data-filter-buy="${TradeSlip.escapeHtml(p.party_name || "")}">
           <td class="px-3 py-2 font-medium text-sky-900 underline-offset-2 ${active ? "underline" : ""}">${TradeSlip.escapeHtml(p.party_name)}</td>
@@ -336,7 +336,7 @@
       ? visible.map((p) => {
           const base = p.sell_party_base || p.sell_party || "—";
           const typeLabel = lineTypeOf(p);
-          const noListingLeg = typeLabel === "Premium";
+          const noListingLeg = false;
           const active =
             filter.sellParty &&
             sameSell(base, filter.sellParty) &&
@@ -399,7 +399,7 @@
             <div class="text-xs text-slate-500">${TradeSlip.escapeHtml(l.party_name || "")}</div>
           </td>
           <td class="px-3 py-2 text-right">${fmt(l.shares_allotted)}</td>
-          <td class="px-3 py-2 text-right">${lineTypeOf(l) === "Premium" ? "—" : fmt(l.sell_amt)}</td>
+          <td class="px-3 py-2 text-right">${fmt(l.sell_amt)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.vyaj)}</td>
           <td class="px-3 py-2 text-right">${fmt(l.net_pl)}</td>
         </tr>`;
@@ -424,7 +424,7 @@
     document.getElementById("sellLineBody").innerHTML = visible.length
       ? visible.map((l) => {
           const typeLabel = lineTypeOf(l);
-          const noListingLeg = typeLabel === "Premium";
+          const noListingLeg = false;
           const active =
             (!filter.buyParty || sameBuy(l.buy_party, filter.buyParty)) &&
             (!filter.sellParty || sameSell(l.sell_party, filter.sellParty)) &&
