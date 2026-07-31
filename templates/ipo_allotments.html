@@ -40,6 +40,13 @@
   </div>
   <div class="flex flex-wrap gap-2 text-xs" id="countChips"></div>
   <p id="driftMsg" class="text-sm text-amber-700 hidden"></p>
+  <div id="orphanBar" class="hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+    <p class="text-sm text-amber-900" id="orphanMsg"></p>
+    <button type="button" id="archiveOrphansBtn"
+            class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-semibold text-amber-900 hover:bg-amber-100">
+      Archive orphans
+    </button>
+  </div>
   <p id="statusMsg" class="text-sm text-slate-500"></p>
   <p id="saveProgress" class="text-sm text-slate-500 hidden"></p>
 </section>
@@ -521,6 +528,18 @@
     } else {
       driftEl.classList.add("hidden");
       driftEl.textContent = "";
+    }
+
+    const orphanBar = document.getElementById("orphanBar");
+    const orphaned = drift.orphaned_count || 0;
+    if (orphaned > 0) {
+      orphanBar.classList.remove("hidden");
+      document.getElementById("orphanMsg").innerHTML =
+        `<strong>${orphaned} orphaned allotment(s)</strong> are no longer on live allocations. ` +
+        `Settlement ignores them — archive to clean the sheet.`;
+    } else {
+      orphanBar.classList.add("hidden");
+      document.getElementById("orphanMsg").textContent = "";
     }
 
     const rows = sortedRows(data).filter((r) => !isPremiumRow(r));
@@ -1176,10 +1195,13 @@
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       render(payload);
       const n = payload.seeded || 0;
+      const archived = payload.archived_orphans || 0;
       setStatus(
         n > 0
-          ? `Loaded ${n} new applicant(s). ${(payload.allotments || []).length} total.`
-          : `Already up to date. ${(payload.allotments || []).length} applicant(s).`,
+          ? `Loaded ${n} new applicant(s). ${(payload.allotments || []).length} total.` +
+            (archived ? ` Archived ${archived} orphan(s).` : "")
+          : `Already up to date. ${(payload.allotments || []).length} applicant(s).` +
+            (archived ? ` Archived ${archived} orphan(s).` : ""),
         "success"
       );
     } catch (e) {
@@ -1198,6 +1220,38 @@
       alert(e.message);
     })
   );
+
+  document.getElementById("archiveOrphansBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("archiveOrphansBtn");
+    if (TradeSlip.isButtonLoading(btn)) return;
+    const ipo_id = document.getElementById("ipoSelect").value;
+    if (!ipo_id) return;
+    const n = (current && current.drift && current.drift.orphaned_count) || 0;
+    if (!n) return;
+    if (
+      !confirm(
+        `Archive ${n} orphaned allotment(s)?\n\n` +
+          "They stay in history but Settlement will not use them. This cannot be undone from the UI."
+      )
+    )
+      return;
+    const endLoading = TradeSlip.beginButtonLoading(btn, { label: "Archiving…" });
+    try {
+      const response = await TradeSlip.apiFetch(
+        `/api/ipo/allotments/archive-orphans?ipo_id=${encodeURIComponent(ipo_id)}`,
+        { method: "POST" }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
+      render(payload);
+      setStatus(`Archived ${payload.archived_orphans || n} orphaned allotment(s).`, "success");
+    } catch (e) {
+      setStatus(e.message, "error");
+      alert(e.message);
+    } finally {
+      endLoading();
+    }
+  });
   document.getElementById("ipoSelect").addEventListener("change", () =>
     reload().catch((e) => {
       setStatus(e.message, "error");

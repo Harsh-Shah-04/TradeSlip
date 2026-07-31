@@ -892,6 +892,12 @@ def set_position_allocations(
         json={"applicant_name": names, "applicant_id": None, "updated_at": _now()},
         timeout=HTTP_TIMEOUT,
     )
+    # Soft-archive allotments for applicants no longer on this position.
+    from utils.ipo.allotments import archive_allotments_for_position
+
+    archive_allotments_for_position(
+        position_id, keep_applicant_ids={str(a["id"]) for a in validated}
+    )
     return get_position(broker_id, position_id)
 
 
@@ -916,4 +922,7 @@ def clear_position_allocations(broker_id: str, position_id: str) -> dict[str, An
         json={"applicant_name": "", "applicant_id": None, "updated_at": _now()},
         timeout=HTTP_TIMEOUT,
     )
+    from utils.ipo.allotments import archive_allotments_for_position
+
+    archive_allotments_for_position(position_id, keep_applicant_ids=set())
     return get_position(broker_id, position_id)

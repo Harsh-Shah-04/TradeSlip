@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 from openpyxl import Workbook
 
-from utils.ipo.allotments import list_allotments_raw
+from utils.ipo.allotments import list_active_allotments_for_settlement, drift_report
 from utils.ipo.categories import application_amount_from_ipo, is_premium, is_subject2
 from utils.ipo.ledger import post_settlement_entries, post_settlement_revisions
 from utils.ipo.models import (
@@ -269,6 +269,16 @@ def _attribute_allotment_rows(
     return ordered[:cap]
 
 
+def _consume_attributed_rows(
+    pool: list[dict[str, Any]], attributed: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return pool minus rows already attributed (by allotment id)."""
+    taken = {str(r.get("id") or "") for r in attributed if r.get("id")}
+    if not taken:
+        return list(pool)
+    return [r for r in pool if str(r.get("id") or "") not in taken]
+
+
 def _allotment_line_totals(rows: list[dict[str, Any]]) -> dict[str, float | int]:
     allotted = [r for r in rows if (r.get("status") or "") == "Allotted"]
     shares = sum(int(r.get("shares_allotted") or 0) for r in allotted)
@@ -388,7 +398,7 @@ def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
         return []
 
     allot_by_pos: dict[str, dict[str, Any]] = {}
-    for row in list_allotments_raw(ipo_id):
+    for row in list_active_allotments_for_settlement(ipo_id):
         pid = str(row.get("position_id") or "")
         if not pid or row.get("applicant_id") is not None:
             continue
@@ -526,7 +536,11 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
     if not positions:
         return empty
 
-    allot_by_pos = _allotments_by_position(list_allotments_raw(ipo_id))
+    allot_by_pos = _allotments_by_position(list_active_allotments_for_settlement(ipo_id))
+    # Remaining rows per position so each allotment is attributed at most once across sells.
+    remaining_by_pos: dict[str, list[dict[str, Any]]] = {
+        pid: list(rows) for pid, rows in allot_by_pos.items()
+    }
 
     sell_lines: list[dict[str, Any]] = []
     ids = list(positions.keys())
@@ -566,11 +580,10 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
             if premium:
                 # Premium: contract = grey sell amount; market from listing allotment
                 # sold price (same Subject-2 three-price split).
-                premium_rows = [
-                    r for r in allot_by_pos.get(pid, []) if r.get("applicant_id") is None
-                ]
+                pool = remaining_by_pos.get(pid, [])
+                premium_rows = [r for r in pool if r.get("applicant_id") is None]
                 if not premium_rows:
-                    premium_rows = allot_by_pos.get(pid, [])
+                    premium_rows = list(pool)
                 shares_allotted = int(round(sell_qty))
                 market_amount = 0.0
                 for r in premium_rows:
@@ -604,9 +617,9 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
                 # receivable from the sell party in full. Guaranteed/market come
                 # from the attributed allotments (buy_rate / actual sold prices)
                 # and only feed the client-difference context fields.
-                attr_rows = _attribute_allotment_rows(
-                    sell_qty, buy_app, allot_by_pos.get(pid, [])
-                )
+                pool = remaining_by_pos.get(pid, [])
+                attr_rows = _attribute_allotment_rows(sell_qty, buy_app, pool)
+                remaining_by_pos[pid] = _consume_attributed_rows(pool, attr_rows)
                 s2_totals = _subject2_allotment_totals(attr_rows, buy_rate)
                 applied = sell_qty
                 allotted = float(s2_totals["allotted"])
@@ -626,9 +639,9 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
                     client_amount=guaranteed_amount,
                 )
             else:
-                attr_rows = _attribute_allotment_rows(
-                    sell_qty, buy_app, allot_by_pos.get(pid, [])
-                )
+                pool = remaining_by_pos.get(pid, [])
+                attr_rows = _attribute_allotment_rows(sell_qty, buy_app, pool)
+                remaining_by_pos[pid] = _consume_attributed_rows(pool, attr_rows)
                 totals = _allotment_line_totals(attr_rows)
                 applied = sell_qty
                 allotted = float(totals["allotted"])
@@ -732,7 +745,7 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
 
 def preview_settlement(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
-    rows = list_allotments_raw(ipo_id)
+    rows = list_active_allotments_for_settlement(ipo_id)
     positions = _positions_map(ipo_id)
     lines = [
         line
@@ -741,6 +754,13 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
     ]
     lines.extend(_premium_buy_lines(ipo_id))
     warnings: list[str] = []
+    drift = drift_report(ipo_id)
+    orphaned = int(drift.get("orphaned_count") or 0)
+    if orphaned:
+        warnings.append(
+            f"{orphaned} orphaned allotment(s) are ignored in Settlement "
+            "(no longer on live allocations). Archive them on Allotments."
+        )
     unsold = [l for l in lines if l["status"] == "Allotted" and not l["is_sold"]]
     if unsold:
         warnings.append(f"{len(unsold)} allotted applicant(s) not yet marked sold.")
@@ -822,6 +842,57 @@ def _list_lines(settlement_id: str) -> list[dict[str, Any]]:
         raise RuntimeError(f"List settlement lines failed ({response.status_code})")
     rows = response.json()
     return rows if isinstance(rows, list) else []
+
+
+def _replace_settlement_lines(settlement_id: str, preview_lines: list[dict[str, Any]]) -> None:
+    """Wipe and rewrite buy-side settlement lines from a live preview."""
+    _http().delete(
+        f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
+        headers=_service_headers({"Prefer": "return=minimal"}),
+        params={"settlement_id": f"eq.{settlement_id}"},
+        timeout=HTTP_TIMEOUT,
+    )
+    line_rows = []
+    for line in preview_lines:
+        line_rows.append(
+            {
+                "settlement_id": settlement_id,
+                "allotment_id": line.get("allotment_id"),
+                "party_id": line.get("party_id"),
+                "applicant_id": line.get("applicant_id"),
+                "position_id": line.get("position_id"),
+                "party_name": line.get("party_name") or "",
+                "applicant_name": line.get("applicant_name") or "",
+                "pan": line.get("pan") or "",
+                "dpid": line.get("dpid") or "",
+                "sub_category": line.get("sub_category") or "",
+                "application_amount": line.get("application_amount"),
+                "vyaj": line["vyaj"],
+                "applied": line["applied"],
+                "allotted_apps": line["allotted_apps"],
+                "shares_allotted": line["shares_allotted"],
+                "sell_premium": line["sell_premium"],
+                "sell_amt": line["sell_amt"],
+                "net_pl": line["net_pl"],
+                "direction": line["direction"],
+            }
+        )
+    for i in range(0, len(line_rows), 100):
+        chunk = line_rows[i : i + 100]
+        if not chunk:
+            continue
+        resp = _http().post(
+            f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
+            headers=_service_headers(
+                {"Content-Type": "application/json", "Prefer": "return=minimal"}
+            ),
+            json=chunk,
+            timeout=HTTP_TIMEOUT,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Insert settlement lines failed ({resp.status_code}): {resp.text[:300]}"
+            )
 
 
 def get_settlement(settlement_id: str) -> dict[str, Any]:
@@ -1010,67 +1081,22 @@ def create_or_refresh_draft(ipo_id: str, broker_id: str, notes: str = "") -> dic
 
 def finalize_settlement(settlement_id: str) -> dict[str, Any]:
     row = _get_settlement(settlement_id)
-    lines = _list_lines(settlement_id)
-    if not lines:
-        raise ValueError("Settlement has no lines. Save a draft first.")
-
     ipo_id = str(row["ipo_id"])
+
+    # Always rebuild buy lines from live allotments before posting ledger.
+    preview = preview_settlement(ipo_id)
+    if not preview.get("lines"):
+        raise ValueError(
+            "Settlement has no active allotment lines. "
+            "Check Allotments (and archive orphans) then Save draft again."
+        )
+    _replace_settlement_lines(settlement_id, preview["lines"])
+    lines = _list_lines(settlement_id)
     party_nets = _settlement_party_nets(lines)
     sell_party_nets = _sell_party_ledger_nets(ipo_id)
 
     # Already finalized → append-only revision (Adjustments for deltas only).
     if row.get("status") == "Finalized":
-        # Refresh lines from current business logic so the snapshot matches the ledger target.
-        preview = preview_settlement(ipo_id)
-        _http().delete(
-            f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
-            headers=_service_headers({"Prefer": "return=minimal"}),
-            params={"settlement_id": f"eq.{settlement_id}"},
-            timeout=HTTP_TIMEOUT,
-        )
-        line_rows = []
-        for line in preview["lines"]:
-            line_rows.append(
-                {
-                    "settlement_id": settlement_id,
-                    "allotment_id": line.get("allotment_id"),
-                    "party_id": line.get("party_id"),
-                    "applicant_id": line.get("applicant_id"),
-                    "position_id": line.get("position_id"),
-                    "party_name": line.get("party_name") or "",
-                    "applicant_name": line.get("applicant_name") or "",
-                    "pan": line.get("pan") or "",
-                    "dpid": line.get("dpid") or "",
-                    "sub_category": line.get("sub_category") or "",
-                    "application_amount": line.get("application_amount"),
-                    "vyaj": line["vyaj"],
-                    "applied": line["applied"],
-                    "allotted_apps": line["allotted_apps"],
-                    "shares_allotted": line["shares_allotted"],
-                    "sell_premium": line["sell_premium"],
-                    "sell_amt": line["sell_amt"],
-                    "net_pl": line["net_pl"],
-                    "direction": line["direction"],
-                }
-            )
-        for i in range(0, len(line_rows), 100):
-            chunk = line_rows[i : i + 100]
-            if not chunk:
-                continue
-            resp = _http().post(
-                f"{_supabase_url()}/rest/v1/{LINES_TABLE}",
-                headers=_service_headers(
-                    {"Content-Type": "application/json", "Prefer": "return=minimal"}
-                ),
-                json=chunk,
-                timeout=HTTP_TIMEOUT,
-            )
-            if resp.status_code not in (200, 201):
-                raise RuntimeError(
-                    f"Refresh settlement lines failed ({resp.status_code}): {resp.text[:300]}"
-                )
-        party_nets = _settlement_party_nets(_list_lines(settlement_id))
-        sell_party_nets = _sell_party_ledger_nets(ipo_id)
         revisions = post_settlement_revisions(
             ipo_id=ipo_id,
             settlement_id=settlement_id,
@@ -1126,14 +1152,20 @@ def finalize_settlement(settlement_id: str) -> dict[str, Any]:
     if patch.status_code not in (200, 204):
         raise RuntimeError(f"Finalize failed ({patch.status_code}): {patch.text[:300]}")
 
-    # First finalize: one Settlement entry per party.
+    # First finalize: one Settlement entry per party from freshly rebuilt lines.
     post_settlement_entries(
         ipo_id=ipo_id,
         settlement_id=settlement_id,
         party_nets=party_nets,
         sell_party_nets=sell_party_nets,
     )
-    return get_settlement(settlement_id)
+    out = get_settlement(settlement_id)
+    out["warnings"] = preview.get("warnings") or []
+    out["sell_party_summary"] = preview.get("sell_party_summary") or []
+    out["sell_lines"] = preview.get("sell_lines") or []
+    out["sell_party_totals"] = preview.get("sell_party_totals") or {}
+    out["grey_market_brokerage"] = preview.get("grey_market_brokerage")
+    return out
 
 
 def _finalized_settlement_id(ipo_id: str) -> str | None:

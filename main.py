@@ -96,6 +96,7 @@ from utils.ipo.confirmations import (
 )
 from utils.ipo.allotments import (
     archive_allotment,
+    archive_orphaned_allotments,
     bulk_update_allotments,
     list_allotments,
     mark_sold,
@@ -2059,6 +2060,19 @@ async def ipo_unmark_sold(admin: AdminAuth, allotment_id: str) -> JSONResponse:
 async def ipo_archive_allotment(admin: AdminAuth, allotment_id: str) -> JSONResponse:
     try:
         result = await asyncio.to_thread(archive_allotment, allotment_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ipo/allotments/archive-orphans")
+async def ipo_archive_orphaned_allotments(
+    admin: AdminAuth, ipo_id: str = Query(...)
+) -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(archive_orphaned_allotments, ipo_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:

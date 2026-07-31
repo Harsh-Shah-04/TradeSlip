@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from utils.ipo.allotments import _effective_price, _money, _pair_key
+from utils.ipo.allotments import (
+    _effective_price,
+    _money,
+    _pair_key,
+    filter_active_allotments_for_settlement,
+)
 from utils.ipo.models import AllotmentBulkUpdate, AllotmentUpdate, allotment_to_json
 from utils.ipo.settlement import (
     _allotment_line_totals,
     _attribute_allotment_rows,
     _build_line_from_allotment,
+    _consume_attributed_rows,
     _direction,
     _party_summary,
     _sell_side_financials,
@@ -116,6 +122,89 @@ def test_attribute_allotment_rows_partial():
     out = _attribute_allotment_rows(1, 2, rows)
     assert len(out) == 1
     assert out[0]["applicant_id"] == "a"
+
+
+def test_filter_active_allotments_excludes_orphans_and_archived():
+    rows = [
+        {
+            "id": "live",
+            "position_id": "pos1",
+            "applicant_id": "app1",
+            "is_archived": False,
+            "cost_per_app": 100,
+        },
+        {
+            "id": "orphan",
+            "position_id": "pos1",
+            "applicant_id": "app2",
+            "is_archived": False,
+            "cost_per_app": 100,
+        },
+        {
+            "id": "nullpos",
+            "position_id": None,
+            "applicant_id": "app3",
+            "is_archived": False,
+            "cost_per_app": 100,
+        },
+        {
+            "id": "archived",
+            "position_id": "pos1",
+            "applicant_id": "app1",
+            "is_archived": True,
+            "cost_per_app": 100,
+        },
+        {
+            "id": "prem-live",
+            "position_id": "prem1",
+            "applicant_id": None,
+            "is_archived": False,
+        },
+        {
+            "id": "prem-orphan",
+            "position_id": "prem-gone",
+            "applicant_id": None,
+            "is_archived": False,
+        },
+    ]
+    active = filter_active_allotments_for_settlement(
+        rows,
+        live_keys={"pos1::app1"},
+        premium_position_ids={"prem1"},
+    )
+    ids = {r["id"] for r in active}
+    assert ids == {"live", "prem-live"}
+
+
+def test_consume_attributed_rows_prevents_fifo_reuse():
+    """Two partial sells must not reuse the same allotment rows."""
+    pool = [
+        {
+            "id": "r1",
+            "applicant_id": "a",
+            "status": "Allotted",
+            "shares_allotted": 10,
+            "cost_per_app": 50,
+            "ipo_applicants": {"name": "A"},
+        },
+        {
+            "id": "r2",
+            "applicant_id": "b",
+            "status": "Allotted",
+            "shares_allotted": 20,
+            "cost_per_app": 50,
+            "ipo_applicants": {"name": "B"},
+        },
+    ]
+    first = _attribute_allotment_rows(1, 2, pool)
+    assert [r["id"] for r in first] == ["r1"]
+    remaining = _consume_attributed_rows(pool, first)
+    assert [r["id"] for r in remaining] == ["r2"]
+    second = _attribute_allotment_rows(1, 2, remaining)
+    assert [r["id"] for r in second] == ["r2"]
+    # Without consume, a second sell against the full pool would wrongly re-take r1.
+    reused = _attribute_allotment_rows(1, 2, pool)
+    assert [r["id"] for r in reused] == ["r1"]
 
 
 def test_allotment_line_totals_listing_side():

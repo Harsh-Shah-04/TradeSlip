@@ -174,6 +174,118 @@ def list_allotments_raw(ipo_id: str, *, include_archived: bool = False) -> list[
     return rows if isinstance(rows, list) else []
 
 
+def filter_active_allotments_for_settlement(
+    rows: list[dict[str, Any]],
+    *,
+    live_keys: set[str],
+    premium_position_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Pure: keep only allotments that still match live allocations / Premium positions.
+
+    Orphans (cleared allocations, deleted positions, stale duplicates) are dropped so
+    Settlement never invents Vyaj or shares from ghost rows.
+    """
+    active: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("is_archived"):
+            continue
+        pid = row.get("position_id")
+        aid = row.get("applicant_id")
+        if aid is None:
+            # Premium listing row — only while the Premium position still exists.
+            if pid is not None and str(pid) in premium_position_ids:
+                active.append(row)
+            continue
+        if pid is None:
+            continue
+        if _pair_key(str(pid), str(aid)) in live_keys:
+            active.append(row)
+    return active
+
+
+def list_active_allotments_for_settlement(ipo_id: str) -> list[dict[str, Any]]:
+    """Allotments Settlement may use: non-archived and still on a live allocation."""
+    live = _live_allocation_pairs(ipo_id)
+    live_keys = {_pair_key(p["position_id"], p["applicant_id"]) for p in live}
+    premium_ids = {str(p["id"]) for p in _premium_positions(ipo_id) if p.get("id")}
+    return filter_active_allotments_for_settlement(
+        list_allotments_raw(ipo_id, include_archived=False),
+        live_keys=live_keys,
+        premium_position_ids=premium_ids,
+    )
+
+
+def _orphan_allotment_ids(ipo_id: str) -> list[str]:
+    """Every non-archived allotment id that drift would flag as orphaned (uncapped)."""
+    live = _live_allocation_pairs(ipo_id)
+    live_keys = {_pair_key(p["position_id"], p["applicant_id"]) for p in live}
+    premium_ids = {str(p["id"]) for p in _premium_positions(ipo_id) if p.get("id")}
+    ids: list[str] = []
+    for row in list_allotments_raw(ipo_id, include_archived=False):
+        pid = row.get("position_id")
+        aid = row.get("applicant_id")
+        row_id = str(row.get("id") or "")
+        if not row_id:
+            continue
+        if aid is None and pid is not None:
+            if str(pid) not in premium_ids:
+                ids.append(row_id)
+            continue
+        key = _pair_key(str(pid) if pid else None, str(aid or ""))
+        if pid is None or key not in live_keys:
+            ids.append(row_id)
+    return ids
+
+
+def archive_orphaned_allotments(ipo_id: str) -> dict[str, Any]:
+    """Soft-archive every allotment that no longer matches live allocations."""
+    ids = _orphan_allotment_ids(ipo_id)
+    archived = 0
+    for allotment_id in ids:
+        archive_allotment(allotment_id)
+        archived += 1
+    result = list_allotments(ipo_id)
+    result["archived_orphans"] = archived
+    return result
+
+
+def archive_allotments_for_position(
+    position_id: str, *, keep_applicant_ids: set[str] | None = None
+) -> int:
+    """Archive active allotments on a position that are not in keep_applicant_ids.
+
+    `keep_applicant_ids=None` archives every applicant allotment on the position
+    (used when allocations are cleared). Premium listing rows (applicant_id null)
+    are left alone.
+    """
+    keep = keep_applicant_ids if keep_applicant_ids is not None else set()
+    response = _http().get(
+        f"{_supabase_url()}/rest/v1/{ALLOTMENTS_TABLE}",
+        headers=_service_headers(),
+        params={
+            "select": "id,applicant_id,is_archived",
+            "position_id": f"eq.{position_id}",
+            "is_archived": "eq.false",
+            "limit": "5000",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"List position allotments failed ({response.status_code}): {response.text[:300]}"
+        )
+    archived = 0
+    for row in response.json() or []:
+        aid = row.get("applicant_id")
+        if aid is None:
+            continue
+        if str(aid) in keep:
+            continue
+        archive_allotment(str(row["id"]))
+        archived += 1
+    return archived
+
+
 def get_allotment(allotment_id: str) -> dict[str, Any]:
     response = _http().get(
         f"{_supabase_url()}/rest/v1/{ALLOTMENTS_TABLE}",
@@ -361,8 +473,11 @@ def seed_allotments(ipo_id: str) -> dict[str, Any]:
             )
         inserted += len(chunk)
 
+    # Ghosts (cleared allocations / null position_id) must not stay active beside new seeds.
+    orphan_cleanup = archive_orphaned_allotments(ipo_id)
     result = list_allotments(ipo_id)
     result["seeded"] = inserted
+    result["archived_orphans"] = int(orphan_cleanup.get("archived_orphans") or 0)
     result["warnings"] = list(dict.fromkeys(warnings + result.get("warnings", [])))
     return result
 
