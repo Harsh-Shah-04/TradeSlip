@@ -486,81 +486,155 @@
     paintAll();
   }
 
+  function syncFinalizeButton() {
+    const finBtn = document.getElementById("finalizeBtn");
+    finBtn.disabled = !draftId;
+    if (!draftId) {
+      finBtn.textContent = "Finalize & post ledger";
+      return;
+    }
+    const status = previewData && previewData.status;
+    finBtn.textContent =
+      status === "Finalized" ? "Post revision to ledger" : "Finalize & post ledger";
+  }
+
+  function setSiblingActionsDisabled(disabled, activeBtn) {
+    ["previewBtn", "draftBtn", "finalizeBtn"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el === activeBtn) return;
+      if (disabled) {
+        el.disabled = true;
+      } else if (id === "finalizeBtn") {
+        syncFinalizeButton();
+      } else {
+        el.disabled = false;
+      }
+    });
+  }
+
   document.getElementById("clearFilterBtn").addEventListener("click", clearFilter);
 
   document.getElementById("previewBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("previewBtn");
+    if (TradeSlip.isButtonLoading(btn)) return;
     const ipo_id = document.getElementById("ipoSelect").value;
-    const response = await TradeSlip.apiFetch(`/api/ipo/settlements/preview?ipo_id=${encodeURIComponent(ipo_id)}`);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert(TradeSlip.parseErrorDetail(payload));
-      return;
+    if (!ipo_id) return;
+    const endLoading = TradeSlip.beginButtonLoading(btn, { label: "Loading…" });
+    setSiblingActionsDisabled(true, btn);
+    TradeSlip.showProgress("Preview", "Building settlement preview…");
+    try {
+      const response = await TradeSlip.apiFetch(
+        `/api/ipo/settlements/preview?ipo_id=${encodeURIComponent(ipo_id)}`
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(TradeSlip.parseErrorDetail(payload));
+        return;
+      }
+      draftId = null;
+      document.getElementById("exportLink").classList.add("hidden");
+      renderPreview(payload);
+      document.getElementById("statusMsg").textContent =
+        "Preview only — not saved. Click any row to filter the other tables.";
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally {
+      endLoading();
+      TradeSlip.hideProgress();
+      setSiblingActionsDisabled(false, btn);
+      syncFinalizeButton();
     }
-    draftId = null;
-    document.getElementById("finalizeBtn").disabled = true;
-    document.getElementById("exportLink").classList.add("hidden");
-    renderPreview(payload);
-    document.getElementById("statusMsg").textContent = "Preview only — not saved. Click any row to filter the other tables.";
   });
 
   document.getElementById("draftBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("draftBtn");
+    if (TradeSlip.isButtonLoading(btn)) return;
     const ipo_id = document.getElementById("ipoSelect").value;
-    const response = await TradeSlip.apiFetch("/api/ipo/settlements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ipo_id }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert(TradeSlip.parseErrorDetail(payload));
-      return;
+    if (!ipo_id) return;
+    const endLoading = TradeSlip.beginButtonLoading(btn, { label: "Saving…" });
+    setSiblingActionsDisabled(true, btn);
+    TradeSlip.showProgress(
+      "Saving draft",
+      "Saving draft / refreshing settlement lines…"
+    );
+    try {
+      const response = await TradeSlip.apiFetch("/api/ipo/settlements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ipo_id }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(TradeSlip.parseErrorDetail(payload));
+        return;
+      }
+      draftId = payload.id;
+      renderPreview(payload);
+      const exp = document.getElementById("exportLink");
+      exp.href = `/api/ipo/settlements/${encodeURIComponent(draftId)}/export.xlsx`;
+      exp.classList.remove("hidden");
+      const revNote = payload.is_revision
+        ? " Finalized IPO — save refreshed the snapshot; Finalize will post Adjustments only for differences."
+        : "";
+      document.getElementById("statusMsg").textContent =
+        `Draft ${payload.status}: ${draftId}.${revNote}`;
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally {
+      endLoading();
+      TradeSlip.hideProgress();
+      setSiblingActionsDisabled(false, btn);
+      syncFinalizeButton();
     }
-    draftId = payload.id;
-    renderPreview(payload);
-    document.getElementById("finalizeBtn").disabled = !draftId;
-    const finBtn = document.getElementById("finalizeBtn");
-    if (payload.status === "Finalized") {
-      finBtn.textContent = "Post revision to ledger";
-    } else {
-      finBtn.textContent = "Finalize & post ledger";
-    }
-    const exp = document.getElementById("exportLink");
-    exp.href = `/api/ipo/settlements/${encodeURIComponent(draftId)}/export.xlsx`;
-    exp.classList.remove("hidden");
-    const revNote = payload.is_revision
-      ? " Finalized IPO — save refreshed the snapshot; Finalize will post Adjustments only for differences."
-      : "";
-    document.getElementById("statusMsg").textContent = `Draft ${payload.status}: ${draftId}.${revNote}`;
   });
 
   document.getElementById("finalizeBtn").addEventListener("click", async () => {
-    if (!draftId) return;
+    const btn = document.getElementById("finalizeBtn");
+    if (!draftId || TradeSlip.isButtonLoading(btn)) return;
     const wasFinalized = previewData && previewData.status === "Finalized";
     const msg = wasFinalized
       ? "Post settlement revision Adjustments for accounts that changed?\n\nExisting Settlement, Payment, and manual Adjustment rows will NOT be overwritten or deleted."
       : "Finalize settlement and post ledger entries? This cannot be undone easily.";
     if (!confirm(msg)) return;
-    const response = await TradeSlip.apiFetch(`/api/ipo/settlements/${encodeURIComponent(draftId)}/finalize`, {
-      method: "POST",
+
+    const endLoading = TradeSlip.beginButtonLoading(btn, {
+      label: wasFinalized ? "Posting…" : "Finalizing…",
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert(TradeSlip.parseErrorDetail(payload));
-      return;
-    }
-    renderPreview(payload);
-    draftId = payload.id || draftId;
-    const finBtn = document.getElementById("finalizeBtn");
-    finBtn.disabled = false;
-    finBtn.textContent = "Post revision to ledger";
-    const n = payload.revisions_posted;
-    document.getElementById("statusMsg").textContent = payload.revision
-      ? (n
-          ? `Posted ${n} settlement revision Adjustment(s). Ledger history preserved.`
-          : "Ledger already matches current settlement — no Adjustments needed.")
-      : "Finalized and posted to Client Ledger.";
-    if ((payload.warnings || []).length) {
-      alert((payload.warnings || []).join("\n"));
+    setSiblingActionsDisabled(true, btn);
+    TradeSlip.showProgress(
+      wasFinalized ? "Posting revision" : "Finalizing",
+      wasFinalized
+        ? "Posting revision Adjustments to Client Ledger…"
+        : "Posting settlement to Client Ledger…"
+    );
+    try {
+      const response = await TradeSlip.apiFetch(
+        `/api/ipo/settlements/${encodeURIComponent(draftId)}/finalize`,
+        { method: "POST" }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(TradeSlip.parseErrorDetail(payload));
+        return;
+      }
+      renderPreview(payload);
+      draftId = payload.id || draftId;
+      const n = payload.revisions_posted;
+      document.getElementById("statusMsg").textContent = payload.revision
+        ? (n
+            ? `Posted ${n} settlement revision Adjustment(s). Ledger history preserved.`
+            : "Ledger already matches current settlement — no Adjustments needed.")
+        : "Finalized and posted to Client Ledger.";
+      if ((payload.warnings || []).length) {
+        alert((payload.warnings || []).join("\n"));
+      }
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally {
+      endLoading();
+      TradeSlip.hideProgress();
+      setSiblingActionsDisabled(false, btn);
+      syncFinalizeButton();
     }
   });
 

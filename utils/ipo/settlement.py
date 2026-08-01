@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 from typing import Any
@@ -26,12 +26,61 @@ SETTLEMENTS_TABLE = "ipo_settlements"
 LINES_TABLE = "ipo_settlement_lines"
 HTTP_TIMEOUT = 30.0
 MONEY_QUANT = Decimal("0.0001")
+FINALIZE_LOCK_SECONDS = 180
 
 _http_client: httpx.Client | None = None
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _acquire_finalize_lock(settlement_id: str) -> None:
+    """Atomically claim Finalize so a second click cannot race ledger posts.
+
+    Uses finalize_lock_until on ipo_settlements: update only when the lock is
+    free or expired. Empty Prefer=return=representation means another request
+    holds the lock.
+    """
+    now = datetime.now(timezone.utc)
+    until = now + timedelta(seconds=FINALIZE_LOCK_SECONDS)
+    now_iso = now.isoformat().replace("+00:00", "Z")
+    until_iso = until.isoformat().replace("+00:00", "Z")
+    response = _http().patch(
+        f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+        headers=_service_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+        ),
+        params={
+            "id": f"eq.{settlement_id}",
+            "or": f"(finalize_lock_until.is.null,finalize_lock_until.lt.{now_iso})",
+        },
+        json={"finalize_lock_until": until_iso, "updated_at": _now()},
+        timeout=HTTP_TIMEOUT,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Acquire finalize lock failed ({response.status_code}): {response.text[:300]}"
+        )
+    rows = response.json() if response.content else []
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(
+            "Finalize already in progress. Wait for it to finish, then try again "
+            "if the ledger still needs a revision."
+        )
+
+
+def _release_finalize_lock(settlement_id: str) -> None:
+    _http().patch(
+        f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+        headers=_service_headers({"Content-Type": "application/json"}),
+        params={"id": f"eq.{settlement_id}"},
+        json={"finalize_lock_until": None, "updated_at": _now()},
+        timeout=HTTP_TIMEOUT,
+    )
 
 
 def _http() -> httpx.Client:
@@ -1083,89 +1132,101 @@ def finalize_settlement(settlement_id: str) -> dict[str, Any]:
     row = _get_settlement(settlement_id)
     ipo_id = str(row["ipo_id"])
 
-    # Always rebuild buy lines from live allotments before posting ledger.
-    preview = preview_settlement(ipo_id)
-    if not preview.get("lines"):
-        raise ValueError(
-            "Settlement has no active allotment lines. "
-            "Check Allotments (and archive orphans) then Save draft again."
-        )
-    _replace_settlement_lines(settlement_id, preview["lines"])
-    lines = _list_lines(settlement_id)
-    party_nets = _settlement_party_nets(lines)
-    sell_party_nets = _sell_party_ledger_nets(ipo_id)
+    _acquire_finalize_lock(settlement_id)
+    try:
+        # Re-read under the lock in case a concurrent request finished first.
+        row = _get_settlement(settlement_id)
+        # Always rebuild buy lines from live allotments before posting ledger.
+        preview = preview_settlement(ipo_id)
+        if not preview.get("lines"):
+            raise ValueError(
+                "Settlement has no active allotment lines. "
+                "Check Allotments (and archive orphans) then Save draft again."
+            )
+        _replace_settlement_lines(settlement_id, preview["lines"])
+        lines = _list_lines(settlement_id)
+        party_nets = _settlement_party_nets(lines)
+        sell_party_nets = _sell_party_ledger_nets(ipo_id)
 
-    # Already finalized → append-only revision (Adjustments for deltas only).
-    if row.get("status") == "Finalized":
-        revisions = post_settlement_revisions(
+        # Already finalized → append-only revision (Adjustments for deltas only).
+        if row.get("status") == "Finalized":
+            revisions = post_settlement_revisions(
+                ipo_id=ipo_id,
+                settlement_id=settlement_id,
+                party_nets=party_nets,
+                sell_party_nets=sell_party_nets,
+            )
+            _http().patch(
+                f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+                headers=_service_headers({"Content-Type": "application/json"}),
+                params={"id": f"eq.{settlement_id}"},
+                json={"updated_at": _now()},
+                timeout=HTTP_TIMEOUT,
+            )
+            out = get_settlement(settlement_id)
+            out["revision"] = True
+            out["revisions_posted"] = len(revisions)
+            out["revision_entries"] = revisions
+            out["sell_party_summary"] = preview.get("sell_party_summary") or []
+            out["sell_lines"] = preview.get("sell_lines") or []
+            out["sell_party_totals"] = preview.get("sell_party_totals") or {}
+            out["grey_market_brokerage"] = preview.get("grey_market_brokerage")
+            out["warnings"] = preview.get("warnings") or []
+            if revisions:
+                out["warnings"] = list(
+                    dict.fromkeys(
+                        (out.get("warnings") or [])
+                        + [
+                            f"Posted {len(revisions)} settlement revision Adjustment(s). "
+                            "Prior Settlement and Payment rows were not changed."
+                        ]
+                    )
+                )
+            else:
+                out["warnings"] = list(
+                    dict.fromkeys(
+                        (out.get("warnings") or [])
+                        + [
+                            "Ledger already matches the current settlement — "
+                            "no Adjustments needed."
+                        ]
+                    )
+                )
+            return out
+
+        patch = _http().patch(
+            f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{settlement_id}", "status": "eq.Draft"},
+            json={
+                "status": "Finalized",
+                "finalized_at": _now(),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
+        if patch.status_code not in (200, 204):
+            raise RuntimeError(f"Finalize failed ({patch.status_code}): {patch.text[:300]}")
+
+        # First finalize: one Settlement entry per party from freshly rebuilt lines.
+        post_settlement_entries(
             ipo_id=ipo_id,
             settlement_id=settlement_id,
             party_nets=party_nets,
             sell_party_nets=sell_party_nets,
         )
-        _http().patch(
-            f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
-            headers=_service_headers({"Content-Type": "application/json"}),
-            params={"id": f"eq.{settlement_id}"},
-            json={"updated_at": _now()},
-            timeout=HTTP_TIMEOUT,
-        )
         out = get_settlement(settlement_id)
-        out["revision"] = True
-        out["revisions_posted"] = len(revisions)
-        out["revision_entries"] = revisions
+        out["warnings"] = preview.get("warnings") or []
         out["sell_party_summary"] = preview.get("sell_party_summary") or []
         out["sell_lines"] = preview.get("sell_lines") or []
         out["sell_party_totals"] = preview.get("sell_party_totals") or {}
         out["grey_market_brokerage"] = preview.get("grey_market_brokerage")
-        out["warnings"] = preview.get("warnings") or []
-        if revisions:
-            out["warnings"] = list(
-                dict.fromkeys(
-                    (out.get("warnings") or [])
-                    + [
-                        f"Posted {len(revisions)} settlement revision Adjustment(s). "
-                        "Prior Settlement and Payment rows were not changed."
-                    ]
-                )
-            )
-        else:
-            out["warnings"] = list(
-                dict.fromkeys(
-                    (out.get("warnings") or [])
-                    + ["Ledger already matches the current settlement — no Adjustments needed."]
-                )
-            )
         return out
-
-    patch = _http().patch(
-        f"{_supabase_url()}/rest/v1/{SETTLEMENTS_TABLE}",
-        headers=_service_headers({"Content-Type": "application/json"}),
-        params={"id": f"eq.{settlement_id}", "status": "eq.Draft"},
-        json={
-            "status": "Finalized",
-            "finalized_at": _now(),
-            "updated_at": _now(),
-        },
-        timeout=HTTP_TIMEOUT,
-    )
-    if patch.status_code not in (200, 204):
-        raise RuntimeError(f"Finalize failed ({patch.status_code}): {patch.text[:300]}")
-
-    # First finalize: one Settlement entry per party from freshly rebuilt lines.
-    post_settlement_entries(
-        ipo_id=ipo_id,
-        settlement_id=settlement_id,
-        party_nets=party_nets,
-        sell_party_nets=sell_party_nets,
-    )
-    out = get_settlement(settlement_id)
-    out["warnings"] = preview.get("warnings") or []
-    out["sell_party_summary"] = preview.get("sell_party_summary") or []
-    out["sell_lines"] = preview.get("sell_lines") or []
-    out["sell_party_totals"] = preview.get("sell_party_totals") or {}
-    out["grey_market_brokerage"] = preview.get("grey_market_brokerage")
-    return out
+    finally:
+        try:
+            _release_finalize_lock(settlement_id)
+        except Exception:
+            pass
 
 
 def _finalized_settlement_id(ipo_id: str) -> str | None:

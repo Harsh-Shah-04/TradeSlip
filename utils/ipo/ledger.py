@@ -754,27 +754,28 @@ def post_settlement_revisions(
     Never overwrites Settlement / Payment / manual Adjustment rows. Posts one
     Adjustment (reference_type=settlement_revision) per account whose desired
     net differs from what is already posted for this IPO.
+
+    Re-reads posted nets before each account write so a second concurrent
+    revision (if it somehow runs) skips accounts already corrected.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    posted_party, posted_sell = _posted_settlement_nets_for_ipo(ipo_id)
-    party_deltas = settlement_revision_deltas(posted=posted_party, desired=party_nets or {})
-    sell_deltas = settlement_revision_deltas(
-        posted=posted_sell, desired=sell_party_nets or {}
-    )
     created: list[dict[str, Any]] = []
-    for account_type, deltas in (
-        (ACCOUNT_PARTY, party_deltas),
-        (ACCOUNT_SELL_PARTY, sell_deltas),
+    for account_type, desired_map in (
+        (ACCOUNT_PARTY, party_nets or {}),
+        (ACCOUNT_SELL_PARTY, sell_party_nets or {}),
     ):
-        for account_id, delta in deltas.items():
-            posted_map = posted_party if account_type == ACCOUNT_PARTY else posted_sell
-            desired_map = (
-                (party_nets or {})
-                if account_type == ACCOUNT_PARTY
-                else (sell_party_nets or {})
-            )
-            posted = posted_map.get(account_id, 0.0)
-            desired = desired_map.get(account_id, 0.0)
+        posted_party, posted_sell = _posted_settlement_nets_for_ipo(ipo_id)
+        posted_map = posted_party if account_type == ACCOUNT_PARTY else posted_sell
+        # Candidate accounts from the first snapshot; each write re-checks live nets.
+        candidates = settlement_revision_deltas(posted=posted_map, desired=desired_map)
+        for account_id in candidates:
+            live_party, live_sell = _posted_settlement_nets_for_ipo(ipo_id)
+            live_map = live_party if account_type == ACCOUNT_PARTY else live_sell
+            posted = float(live_map.get(account_id, 0.0))
+            desired = float(desired_map.get(account_id, 0.0))
+            delta = float(_money(desired) - _money(posted))
+            if abs(delta) < EPSILON:
+                continue
             created.append(
                 _append_entry(
                     account_type=account_type,

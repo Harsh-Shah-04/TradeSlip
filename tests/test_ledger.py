@@ -461,6 +461,26 @@ def test_settlement_revision_deltas_adds_new_accounts():
     assert deltas["new"] == pytest.approx(1500.0)
 
 
+def test_settlement_revision_second_pass_empty_after_apply():
+    """After the first revision deltas are applied, a second pass must be empty.
+
+    Models the double-click case once the first request has finished writing.
+    """
+    from utils.ipo.ledger import settlement_revision_deltas
+
+    posted = {"mitesh": 7300.0, "karan": -73200.0}
+    desired = {"mitesh": 3650.0, "karan": -36600.0}
+    first = settlement_revision_deltas(posted=posted, desired=desired)
+    assert first["mitesh"] == pytest.approx(-3650.0)
+    assert first["karan"] == pytest.approx(36600.0)
+
+    after = {k: posted.get(k, 0.0) + first.get(k, 0.0) for k in set(posted) | set(desired)}
+    # Simulate a raced second click that still computed against the old posted
+    # snapshot — that would wrongly return first again. After apply, live nets match.
+    second = settlement_revision_deltas(posted=after, desired=desired)
+    assert second == {}
+
+
 def test_balance_equals_open_items_minus_on_account():
     """The headline balance must always reconcile to the open-item breakdown."""
     entries = [
