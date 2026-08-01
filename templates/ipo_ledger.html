@@ -322,6 +322,13 @@
     <h3 class="text-lg font-bold text-slate-900">Edit entry</h3>
     <p class="text-sm text-slate-600 mt-1" id="editSubtitle">—</p>
     <div class="mt-4 space-y-3">
+      <div id="editDirectionWrap" class="hidden">
+        <label class="block text-xs font-medium text-slate-600 mb-1" for="editDirection">Which way?</label>
+        <select id="editDirection" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          <option value="receive">Collect from them</option>
+          <option value="pay">Pay them</option>
+        </select>
+      </div>
       <div>
         <label class="block text-xs font-medium text-slate-600 mb-1" for="editAmount">Amount</label>
         <input type="number" id="editAmount" min="0" step="any" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -1003,13 +1010,20 @@
     if (!entry) return;
     state.editing = entry;
     $("editSubtitle").textContent =
-      `${entry.entry_type} · ${(entry.entry_date || "").slice(0, 10)}${entry.ipo_name ? " · " + entry.ipo_name : ""}`;
+      `${entryLabel(entry.entry_type)} · ${(entry.entry_date || "").slice(0, 10)}${entry.ipo_name ? " · " + entry.ipo_name : ""}`;
     $("editAmount").value = Math.abs(entry.amount).toFixed(2);
     $("editDate").value = (entry.entry_date || "").slice(0, 10);
     $("editNotes").value = entry.notes || "";
-    $("editAmountHint").textContent = entry.entry_type === "Adjustment"
-      ? "Direction stays the same; only the size changes."
-      : "Changing this re-spreads the payment across the pending IPOs.";
+    const isAdj = entry.entry_type === "Adjustment";
+    $("editDirectionWrap").classList.toggle("hidden", !isAdj);
+    if (isAdj) {
+      $("editDirection").value = Number(entry.amount) >= 0 ? "receive" : "pay";
+      $("editAmountHint").textContent =
+        "Change the amount and/or Collect vs Pay them (e.g. flip +5,000 Collect to Pay them).";
+    } else {
+      $("editAmountHint").textContent =
+        "Changing this re-spreads the payment across the pending IPOs.";
+    }
     openModal("editModal");
   }
 
@@ -1166,10 +1180,15 @@
     $("editSave").addEventListener("click", async (e) => {
       const stop = TradeSlip.beginButtonLoading(e.currentTarget, { label: "Saving…" });
       try {
+        const magnitude = Math.abs(Number($("editAmount").value) || 0);
+        let amount = magnitude;
+        if (state.editing && state.editing.entry_type === "Adjustment") {
+          amount = $("editDirection").value === "receive" ? magnitude : -magnitude;
+        }
         const r = await TradeSlip.apiFetch(`/api/ipo/ledger/entries/${encodeURIComponent(state.editing.id)}`, {
           method: "PATCH", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            amount: Number($("editAmount").value) || undefined,
+            amount: magnitude > 0 ? amount : undefined,
             entry_date: $("editDate").value || undefined,
             notes: $("editNotes").value,
           }),

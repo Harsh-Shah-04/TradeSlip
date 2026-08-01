@@ -253,6 +253,91 @@ def test_adjustment_cannot_shrink_below_what_was_already_paid(monkeypatch):
         ledger.update_ledger_entry("e1", amount=500)
 
 
+def test_adjustment_edit_can_flip_collect_to_pay_them(monkeypatch):
+    """Mistaken +5,000 Collect can be flipped to −5,000 Pay them in one edit."""
+    patched: dict = {}
+
+    class FakeResp:
+        status_code = 204
+        content = b""
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr(
+        ledger,
+        "_get_entry",
+        lambda entry_id: {
+            "id": entry_id,
+            "entry_type": "Adjustment",
+            "party_id": "p1",
+            "amount": 5000,
+        },
+    )
+    monkeypatch.setattr(ledger, "_fetch_allocations", lambda charge_ids=None: [])
+    monkeypatch.setattr(
+        ledger,
+        "account_ledger",
+        lambda account_type, account_id: {"account": {"account_id": account_id}},
+    )
+    monkeypatch.setattr(ledger, "_supabase_url", lambda: "http://test")
+    monkeypatch.setattr(ledger, "_service_headers", lambda extra=None: {})
+
+    def fake_http():
+        class C:
+            def patch(self, *args, **kwargs):
+                patched["json"] = kwargs.get("json") or {}
+                return FakeResp()
+
+        return C()
+
+    monkeypatch.setattr(ledger, "_http", fake_http)
+    ledger.update_ledger_entry("e1", amount=-5000)
+    assert patched["json"]["amount"] == pytest.approx(-5000.0)
+
+
+def test_adjustment_edit_can_change_size_keeping_pay_direction(monkeypatch):
+    patched: dict = {}
+
+    class FakeResp:
+        status_code = 204
+        content = b""
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr(
+        ledger,
+        "_get_entry",
+        lambda entry_id: {
+            "id": entry_id,
+            "entry_type": "Adjustment",
+            "party_id": "p1",
+            "amount": -3000,
+        },
+    )
+    monkeypatch.setattr(ledger, "_fetch_allocations", lambda charge_ids=None: [])
+    monkeypatch.setattr(
+        ledger,
+        "account_ledger",
+        lambda account_type, account_id: {"account": {"account_id": account_id}},
+    )
+    monkeypatch.setattr(ledger, "_supabase_url", lambda: "http://test")
+    monkeypatch.setattr(ledger, "_service_headers", lambda extra=None: {})
+
+    def fake_http():
+        class C:
+            def patch(self, *args, **kwargs):
+                patched["json"] = kwargs.get("json") or {}
+                return FakeResp()
+
+        return C()
+
+    monkeypatch.setattr(ledger, "_http", fake_http)
+    ledger.update_ledger_entry("e1", amount=-4500)
+    assert patched["json"]["amount"] == pytest.approx(-4500.0)
+
+
 def test_entry_account_reads_either_side():
     assert ledger._entry_account({"party_id": "p1"}) == (ACCOUNT_PARTY, "p1")
     assert ledger._entry_account({"sell_party_id": "s1", "party_id": None}) == (

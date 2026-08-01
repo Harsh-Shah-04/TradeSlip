@@ -1037,6 +1037,9 @@ def update_ledger_entry(
     Date and notes are always editable. Changing a payment's amount re-spreads
     it across the open charges; reducing an adjustment below what has already
     been paid against it is refused rather than silently leaving a broken link.
+
+    For Adjustments, `amount` is **signed**: positive = Collect from them,
+    negative = Pay them (so a mistaken +5,000 Collect can be flipped to −5,000).
     """
     row = _get_entry(entry_id)
     entry_type = row.get("entry_type") or ""
@@ -1069,7 +1072,10 @@ def update_ledger_entry(
                     f"{magnitude:,.2f} is less than the {allocated:,.2f} already "
                     "paid against this entry. Undo the payment first."
                 )
-            new_amount = float(amount)
+            # Signed: Collect (+) or Pay them (−). Callers (UI) send the sign explicitly.
+            new_amount = float(_money(amount))
+            if abs(new_amount) < EPSILON:
+                raise ValueError("Amount must not be zero.")
         patch["amount"] = float(_money(new_amount))
 
     response = _http().patch(
