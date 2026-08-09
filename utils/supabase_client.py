@@ -19,6 +19,48 @@ SIGNED_URL_EXPIRES_SECONDS = 600
 DEFAULT_TEMPLATE_STORAGE_PATH = "templates/blank-trade-slip.pdf"
 HTTP_TIMEOUT = 30.0
 
+class _PooledTransport(httpx.HTTPTransport):
+    """Pooled transport that survives a keep-alive connection being reaped.
+
+    A pooled connection can be closed by the peer while idle. Writing the next
+    request onto it fails with RemoteProtocolError, which httpx's own `retries`
+    does NOT cover (that only retries connection *establishment*). Observed in
+    practice against Supabase.
+
+    Retrying is only safe when the request has no side effect. GET/HEAD/OPTIONS
+    are replayed once; POST/PATCH/PUT/DELETE are re-raised untouched, because a
+    write that may already have landed must never be repeated silently. Callers
+    see the error and can decide, which is the correct behaviour for a ledger.
+    """
+
+    _REPLAYABLE = frozenset({"GET", "HEAD", "OPTIONS"})
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return super().handle_request(request)
+        except httpx.RemoteProtocolError:
+            if request.method.upper() not in self._REPLAYABLE:
+                raise
+            return super().handle_request(request)
+
+
+def new_pooled_client(timeout: float = HTTP_TIMEOUT) -> httpx.Client:
+    """One shared client per module, so calls reuse a warm TLS connection.
+
+    Without pooling every call paid a fresh DNS + TCP + TLS handshake (~985ms
+    measured, against ~150ms on a reused connection). keepalive_expiry is kept
+    well under Supabase's idle timeout so connections are retired before the
+    server reaps them; _PooledTransport handles the races that remain.
+    """
+    return httpx.Client(
+        timeout=timeout,
+        transport=_PooledTransport(retries=2),
+        limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=10.0),
+    )
+
+
+_HTTP = new_pooled_client()
+
 _cached_template_path: Path | None = None
 
 
@@ -56,7 +98,7 @@ def _service_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def upload_slip(path: str, pdf_bytes: bytes, upsert: bool) -> str:
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{path.lstrip('/')}",
         headers=_service_headers(
             {
@@ -73,7 +115,7 @@ def upload_slip(path: str, pdf_bytes: bytes, upsert: bool) -> str:
 
 
 def create_signed_slip_url(storage_path: str, expires_in: int = SIGNED_URL_EXPIRES_SECONDS) -> str:
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/storage/v1/object/sign/{BUCKET_NAME}/{storage_path.lstrip('/')}",
         headers=_service_headers({"Content-Type": "application/json"}),
         json={"expiresIn": expires_in},
@@ -110,7 +152,7 @@ def upsert_slip_row(
         "public_url": public_url,
         "updated_at": now,
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(
             {
@@ -139,7 +181,7 @@ def mark_signed(
     public_url: str,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(
             {
@@ -186,7 +228,7 @@ def list_slips(
     if search and search.strip():
         params["client_code"] = f"ilike.*{search.strip()}*"
 
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(),
         params=params,
@@ -199,7 +241,7 @@ def list_slips(
 
 
 def get_slip_row(broker_id: str, client_code: str, trade_date_iso: str) -> dict[str, Any]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(),
         params={
@@ -238,7 +280,7 @@ def update_slip_row(
     if status is not None:
         patch["status"] = status
 
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(
             {
@@ -265,7 +307,7 @@ def update_slip_row(
 
 
 def delete_slip_row(broker_id: str, client_code: str, trade_date_iso: str) -> None:
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={
@@ -282,14 +324,14 @@ def delete_slip_row(broker_id: str, client_code: str, trade_date_iso: str) -> No
 def delete_storage_object(storage_path: str) -> None:
     """Delete a storage object. Missing files (404) are ignored."""
     encoded = "/".join(quote(part, safe="") for part in storage_path.lstrip("/").split("/"))
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/{encoded}",
         headers=_service_headers(),
         timeout=HTTP_TIMEOUT,
     )
     if response.status_code in (200, 204, 404):
         return
-    remove = httpx.post(
+    remove = _HTTP.post(
         f"{_supabase_url()}/storage/v1/object/{BUCKET_NAME}/remove",
         headers=_service_headers({"Content-Type": "application/json"}),
         json={"prefixes": [storage_path.lstrip("/")]},
@@ -313,7 +355,7 @@ def download_slip_bytes(storage_path: str, client: httpx.Client | None = None) -
     if client is not None:
         response = client.get(url, headers=headers, timeout=HTTP_TIMEOUT)
     else:
-        response = httpx.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        response = _HTTP.get(url, headers=headers, timeout=HTTP_TIMEOUT)
     if response.status_code != 200:
         raise RuntimeError(
             f"Download failed ({response.status_code}) for {storage_path!r}: {response.text[:300]}"
@@ -395,7 +437,7 @@ def resolve_blank_template_path(preferred: Path | None = None) -> Path:
 
 
 def get_broker_by_id(broker_id: str) -> dict[str, Any] | None:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "id": f"eq.{broker_id}", "limit": "1"},
@@ -411,7 +453,7 @@ def get_broker_by_id(broker_id: str) -> dict[str, Any] | None:
 
 def get_broker_by_email(email: str) -> dict[str, Any] | None:
     normalized = email.strip().lower()
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "email": f"eq.{normalized}", "limit": "1"},
@@ -426,7 +468,7 @@ def get_broker_by_email(email: str) -> dict[str, Any] | None:
 
 
 def list_brokers() -> list[dict[str, Any]]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "order": "created_at.asc"},
@@ -452,7 +494,7 @@ def upsert_broker_row(
         "role": role,
         "is_active": is_active,
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(
             {
@@ -475,7 +517,7 @@ def upsert_broker_row(
 
 
 def set_broker_active(broker_id: str, is_active: bool) -> dict[str, Any]:
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(
             {
@@ -498,7 +540,7 @@ def set_broker_active(broker_id: str, is_active: bool) -> dict[str, Any]:
 
 
 def update_broker_profile(broker_id: str, display_name: str) -> dict[str, Any]:
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{BROKERS_TABLE}",
         headers=_service_headers(
             {
@@ -522,7 +564,7 @@ def update_broker_profile(broker_id: str, display_name: str) -> dict[str, Any]:
 
 def create_auth_user(email: str, password: str, display_name: str) -> dict[str, Any]:
     """Create a Supabase Auth user via the Admin API (service role)."""
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/auth/v1/admin/users",
         headers=_service_headers({"Content-Type": "application/json"}),
         json={
@@ -555,7 +597,7 @@ def create_auth_user(email: str, password: str, display_name: str) -> dict[str, 
 
 def change_user_password(access_token: str, new_password: str) -> None:
     anon = _env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY")
-    response = httpx.put(
+    response = _HTTP.put(
         f"{_supabase_url()}/auth/v1/user",
         headers={
             "apikey": anon,
@@ -584,7 +626,7 @@ def broker_owns_storage_path(broker_id: str, storage_path: str) -> bool:
     cleaned = storage_path.strip().lstrip("/")
     if cleaned.startswith(f"{broker_id}/"):
         return True
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(),
         params={
@@ -624,7 +666,7 @@ def list_history_days(
         else:
             params["trade_date"] = f"lte.{date_to}"
 
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{TABLE_NAME}",
         headers=_service_headers(),
         params=params,

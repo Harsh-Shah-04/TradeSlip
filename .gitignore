@@ -23,6 +23,7 @@ previews/
 *.csv
 *.doc
 *.docx
+*.md
 
 # Python
 __pycache__/
@@ -73,3 +74,4 @@ logs/
 
 # Vercel
 .vercel/
+.gstack/

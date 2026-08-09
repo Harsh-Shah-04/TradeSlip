@@ -17,7 +17,7 @@ import httpx
 from utils.ipo.categories import is_premium
 from utils.ipo.models import AllotmentUpdate, allotment_to_json
 from utils.ipo.service import get_ipo
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 ALLOTMENTS_TABLE = "ipo_allotments"
 ALLOCATIONS_TABLE = "ipo_position_allocations"
@@ -36,7 +36,7 @@ def _now() -> str:
 def _http() -> httpx.Client:
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+        _http_client = new_pooled_client()
     return _http_client
 
 

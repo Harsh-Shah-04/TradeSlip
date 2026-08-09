@@ -16,7 +16,7 @@ from utils.ipo.models import (
     applicant_to_json,
     party_to_json,
 )
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 PARTIES_TABLE = "ipo_parties"
 APPLICANTS_TABLE = "ipo_applicants"
@@ -35,7 +35,7 @@ def _http() -> httpx.Client:
     """Reuse one client so warm serverless instances skip repeated TLS handshakes."""
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+        _http_client = new_pooled_client()
     return _http_client
 
 

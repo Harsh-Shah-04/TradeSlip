@@ -1551,6 +1551,7 @@ async def ipo_list_master(
     status: str | None = Query(default=None),
     active_only: bool = Query(default=False),
     include_archived: bool = Query(default=False),
+    include_trade_count: bool = Query(default=False),
 ) -> JSONResponse:
     try:
         items = await asyncio.to_thread(
@@ -1558,6 +1559,7 @@ async def ipo_list_master(
             status=status,
             include_archived=include_archived,
             active_only=active_only,
+            include_trade_count=include_trade_count,
         )
     except Exception as exc:
         logger.exception("Failed to list IPO master")

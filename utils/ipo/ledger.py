@@ -30,7 +30,7 @@ import httpx
 from openpyxl import Workbook
 
 from utils.ipo.models import ledger_entry_to_json
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 LEDGER_TABLE = "ipo_ledger_entries"
 ALLOCATIONS_TABLE = "ipo_ledger_allocations"
@@ -58,7 +58,7 @@ def _now() -> str:
 def _http() -> httpx.Client:
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+        _http_client = new_pooled_client()
     return _http_client
 
 

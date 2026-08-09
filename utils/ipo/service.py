@@ -28,7 +28,7 @@ from utils.ipo.models import (
     position_to_json,
     sell_to_json,
 )
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 MASTER_TABLE = "ipo_master"
 POSITIONS_TABLE = "ipo_positions"
@@ -38,6 +38,12 @@ APPLICANTS_TABLE = "ipo_applicants"
 LABELS_TABLE = "ipo_category_labels"
 HTTP_TIMEOUT = 30.0
 MONEY_QUANT = Decimal("0.0001")
+
+# One pooled client for the module. Without this every call paid a fresh
+# DNS + TCP + TLS handshake (~985ms measured) instead of reusing a keep-alive
+# connection (~150ms). `retries` only retries connection *establishment*, never
+# a request that was already sent, so it is safe for POST/PATCH.
+_HTTP = new_pooled_client()
 
 
 def _money(value: float | int | Decimal | str) -> Decimal:
@@ -67,7 +73,7 @@ def _now() -> str:
 
 
 def list_category_labels() -> list[dict[str, Any]]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{LABELS_TABLE}",
         headers=_service_headers(),
         params={
@@ -99,7 +105,7 @@ def list_category_labels() -> list[dict[str, Any]]:
 
 
 def count_positions_for_ipo(ipo_id: str) -> int:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers={**_service_headers(), "Prefer": "count=exact"},
         params={"select": "id", "ipo_id": f"eq.{ipo_id}", "limit": "1"},
@@ -116,12 +122,62 @@ def count_positions_for_ipo(ipo_id: str) -> int:
         return len(data) if isinstance(data, list) else 0
 
 
+def _count_positions_by_ipo(ipo_ids: list[str]) -> dict[str, int]:
+    """Position count for many IPOs in one query instead of one query per IPO.
+
+    Counts exactly what `count_positions_for_ipo` counts: every position row on
+    the IPO, with no broker or archive filter. If the result set is truncated by
+    the row limit it falls back to the per-IPO count for that chunk, so the
+    number can never come back short.
+    """
+    unique = list(dict.fromkeys(str(i) for i in ipo_ids if i))
+    if not unique:
+        return {}
+    counts: dict[str, int] = {ipo_id: 0 for ipo_id in unique}
+    limit = 50000
+    for i in range(0, len(unique), 50):
+        chunk = unique[i : i + 50]
+        response = _HTTP.get(
+            f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+            headers=_service_headers(),
+            params={
+                "select": "ipo_id",
+                "ipo_id": f"in.({','.join(chunk)})",
+                "limit": str(limit),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Count positions failed ({response.status_code}): {response.text[:300]}"
+            )
+        data = response.json()
+        rows = data if isinstance(data, list) else []
+        if len(rows) >= limit:
+            # Truncated — count these one by one rather than under-report.
+            for ipo_id in chunk:
+                counts[ipo_id] = count_positions_for_ipo(ipo_id)
+            continue
+        for row in rows:
+            key = str(row.get("ipo_id") or "")
+            if key in counts:
+                counts[key] += 1
+    return counts
+
+
 def list_ipos(
     *,
     status: str | None = None,
     include_archived: bool = False,
     active_only: bool = False,
+    include_trade_count: bool = False,
 ) -> list[dict[str, Any]]:
+    """List IPOs. `trade_count` is omitted unless asked for.
+
+    Only the IPO Master table renders `trade_count`. Computing it cost one extra
+    query per IPO, which made this a 10.8s endpoint for the Settlement,
+    Allotments, and Positions dropdowns that never display it.
+    """
     params: dict[str, str] = {
         "select": "*",
         "order": "updated_at.desc",
@@ -135,7 +191,7 @@ def list_ipos(
     if not include_archived and not active_only:
         params["is_archived"] = "eq.false"
 
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers(),
         params=params,
@@ -145,11 +201,16 @@ def list_ipos(
         raise RuntimeError(f"List IPOs failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     rows = data if isinstance(data, list) else []
-    return [master_to_json(row, trade_count=count_positions_for_ipo(str(row["id"]))) for row in rows]
+    if not include_trade_count:
+        return [master_to_json(row) for row in rows]
+    counts = _count_positions_by_ipo([str(row["id"]) for row in rows])
+    return [
+        master_to_json(row, trade_count=counts.get(str(row["id"]), 0)) for row in rows
+    ]
 
 
 def get_ipo(ipo_id: str, *, include_trade_count: bool = True) -> dict[str, Any]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "id": f"eq.{ipo_id}", "limit": "1"},
@@ -185,7 +246,7 @@ def create_ipo(payload: IpoMasterCreate) -> dict[str, Any]:
         "is_archived": False,
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -248,7 +309,7 @@ def update_ipo(ipo_id: str, payload: IpoMasterUpdate) -> dict[str, Any]:
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -276,7 +337,7 @@ def delete_ipo(ipo_id: str) -> None:
             f"{'s' if trade_count != 1 else ''}. Deleting it would orphan historical trading data. "
             "Please archive the IPO instead or remove all associated trades before deleting."
         )
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"id": f"eq.{ipo_id}"},
@@ -305,7 +366,7 @@ def _list_allocations_for_positions(
     applicant_ids: set[str] = set()
     for i in range(0, len(position_ids), 50):
         chunk = position_ids[i : i + 50]
-        response = httpx.get(
+        response = _HTTP.get(
             f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
             headers=_service_headers(),
             params={
@@ -331,7 +392,7 @@ def _list_allocations_for_positions(
     id_list = list(applicant_ids)
     for i in range(0, len(id_list), 50):
         chunk = id_list[i : i + 50]
-        response = httpx.get(
+        response = _HTTP.get(
             f"{_supabase_url()}/rest/v1/{APPLICANTS_TABLE}",
             headers=_service_headers(),
             params={"select": "*", "id": f"in.({','.join(chunk)})"},
@@ -362,7 +423,7 @@ def _list_sells_for_positions(broker_id: str, position_ids: list[str]) -> dict[s
     for i in range(0, len(position_ids), chunk_size):
         chunk = position_ids[i : i + chunk_size]
         ids_filter = ",".join(chunk)
-        response = httpx.get(
+        response = _HTTP.get(
             f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
             headers=_service_headers(),
             params={
@@ -390,7 +451,7 @@ def _ipo_map(ipo_ids: list[str]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for i in range(0, len(unique), 50):
         chunk = unique[i : i + 50]
-        response = httpx.get(
+        response = _HTTP.get(
             f"{_supabase_url()}/rest/v1/{MASTER_TABLE}",
             headers=_service_headers(),
             params={"select": "*", "id": f"in.({','.join(chunk)})"},
@@ -430,7 +491,7 @@ def list_positions(
     elif date_to:
         params["trade_date"] = f"lte.{date_to}"
 
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(),
         params=params,
@@ -466,7 +527,7 @@ def list_positions(
 
 
 def get_position(broker_id: str, position_id: str) -> dict[str, Any]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(),
         params={
@@ -526,7 +587,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "buy_amt": float(buy_amt),
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -568,7 +629,7 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "notes": "",
         "updated_at": _now(),
     }
-    sell_response = httpx.post(
+    sell_response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -660,7 +721,7 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         "buy_amt": float(buy_amt),
         "updated_at": _now(),
     }
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -686,7 +747,7 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
 
 def delete_position(broker_id: str, position_id: str) -> None:
     get_position(broker_id, position_id)
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
@@ -722,7 +783,7 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         "notes": payload.notes or "",
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -782,7 +843,7 @@ def update_sell(
         "notes": payload.notes if payload.notes is not None else existing_sell.get("notes") or "",
         "updated_at": _now(),
     }
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -804,7 +865,7 @@ def delete_sell(broker_id: str, position_id: str, sell_id: str) -> dict[str, Any
     position = get_position(broker_id, position_id)
     if not any(s["id"] == sell_id for s in position["sells"]):
         raise LookupError("Sell transaction not found.")
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={
@@ -861,14 +922,14 @@ def set_position_allocations(
         validated.append(app)
 
     # Replace allocation set
-    httpx.delete(
+    _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"position_id": f"eq.{position_id}"},
         timeout=HTTP_TIMEOUT,
     )
     rows = [{"position_id": position_id, "applicant_id": a["id"]} for a in validated]
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=minimal"}
@@ -883,7 +944,7 @@ def set_position_allocations(
 
     # Denormalize names onto position for quick display
     names = ", ".join(a.get("name") or "" for a in validated)
-    httpx.patch(
+    _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=minimal"}
@@ -903,7 +964,7 @@ def set_position_allocations(
 
 def clear_position_allocations(broker_id: str, position_id: str) -> dict[str, Any]:
     get_position(broker_id, position_id)
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{ALLOCATIONS_TABLE}",
         headers=_service_headers({"Prefer": "return=minimal"}),
         params={"position_id": f"eq.{position_id}"},
@@ -913,7 +974,7 @@ def clear_position_allocations(broker_id: str, position_id: str) -> dict[str, An
         raise RuntimeError(
             f"Clear allocations failed ({response.status_code}): {response.text[:300]}"
         )
-    httpx.patch(
+    _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=minimal"}

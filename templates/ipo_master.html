@@ -233,7 +233,10 @@
   async function loadIpos() {
     statusEl.textContent = "Loading…";
     const archived = document.getElementById("showArchived").checked;
-    const response = await TradeSlip.apiFetch(`/api/ipo/master?include_archived=${archived}`);
+    // This is the only page that renders trade_count, so it is the only one that
+    // asks for it. Every other caller skips the per-IPO position count.
+    const response = await TradeSlip.apiFetch(
+      `/api/ipo/master?include_archived=${archived}&include_trade_count=true`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       body.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-red-600">${TradeSlip.escapeHtml(TradeSlip.parseErrorDetail(payload))}</td></tr>`;

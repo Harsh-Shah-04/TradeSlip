@@ -8,11 +8,14 @@ from typing import Any
 import httpx
 
 from utils.ipo.models import SellPartyCreate, SellPartyUpdate, sell_party_to_json
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 SELL_PARTIES_TABLE = "ipo_sell_parties"
 SELLS_TABLE = "ipo_sells"
 HTTP_TIMEOUT = 30.0
+
+# One pooled client for the module. See utils/supabase_client.py for why.
+_HTTP = new_pooled_client()
 
 
 def _now() -> str:
@@ -37,7 +40,7 @@ def list_sell_parties(
     if search and search.strip():
         params["name"] = f"ilike.*{search.strip()}*"
 
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(),
         params=params,
@@ -58,7 +61,7 @@ def list_sell_parties(
 
 
 def get_sell_party(sell_party_id: str) -> dict[str, Any]:
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(),
         params={"select": "*", "id": f"eq.{sell_party_id}", "limit": "1"},
@@ -85,7 +88,7 @@ def create_sell_party(payload: SellPartyCreate) -> dict[str, Any]:
         "is_archived": False,
         "updated_at": _now(),
     }
-    response = httpx.post(
+    response = _HTTP.post(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -120,7 +123,7 @@ def update_sell_party(sell_party_id: str, payload: SellPartyUpdate) -> dict[str,
     if payload.is_archived is not None:
         patch["is_archived"] = payload.is_archived
 
-    response = httpx.patch(
+    response = _HTTP.patch(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(
             {"Content-Type": "application/json", "Prefer": "return=representation"}
@@ -137,7 +140,7 @@ def update_sell_party(sell_party_id: str, payload: SellPartyUpdate) -> dict[str,
 
     # Keep historical sells in sync when renaming
     if new_name and new_name != old_name:
-        httpx.patch(
+        _HTTP.patch(
             f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
             headers=_service_headers({"Content-Type": "application/json"}),
             params={"sell_party": f"eq.{old_name}"},
@@ -168,7 +171,7 @@ def sell_party_ids_by_name(names: list[str]) -> dict[str, str]:
     wanted = {(n or "").strip().casefold() for n in names if n and n.strip()}
     if not wanted:
         return {}
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(),
         params={"select": "id,name", "limit": "5000"},
@@ -198,7 +201,7 @@ def delete_sell_party(sell_party_id: str) -> None:
             f"Cannot delete sell party '{existing.get('name')}': linked to {trade_count} sell(s). "
             "Archive it instead."
         )
-    response = httpx.delete(
+    response = _HTTP.delete(
         f"{_supabase_url()}/rest/v1/{SELL_PARTIES_TABLE}",
         headers=_service_headers(),
         params={"id": f"eq.{sell_party_id}"},
@@ -215,7 +218,7 @@ def _sell_trade_counts(_ids: list[str], names: list[str]) -> dict[str, int]:
     wanted = {(n or "").casefold() for n in names if n}
     if not wanted:
         return {}
-    response = httpx.get(
+    response = _HTTP.get(
         f"{_supabase_url()}/rest/v1/{SELLS_TABLE}",
         headers=_service_headers(),
         params={"select": "sell_party", "limit": "10000"},

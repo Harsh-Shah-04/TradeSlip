@@ -20,7 +20,7 @@ from utils.ipo.models import (
 )
 from utils.ipo.sell_parties import sell_party_ids_by_name
 from utils.ipo.service import get_ipo
-from utils.supabase_client import _service_headers, _supabase_url
+from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
 
 SETTLEMENTS_TABLE = "ipo_settlements"
 LINES_TABLE = "ipo_settlement_lines"
@@ -86,7 +86,7 @@ def _release_finalize_lock(settlement_id: str) -> None:
 def _http() -> httpx.Client:
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(timeout=HTTP_TIMEOUT)
+        _http_client = new_pooled_client()
     return _http_client
 
 
