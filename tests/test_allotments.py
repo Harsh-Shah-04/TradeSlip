@@ -10,7 +10,7 @@ from utils.ipo.allotments import (
     _pair_key,
     filter_active_allotments_for_settlement,
 )
-from utils.ipo.models import AllotmentBulkUpdate, AllotmentUpdate, allotment_to_json
+from utils.ipo.models import AllotmentBulkUpdate, AllotmentUpdate, CommonListingPriceRequest, allotment_to_json
 from utils.ipo.settlement import (
     _allotment_line_totals,
     _attribute_allotment_rows,
@@ -40,6 +40,54 @@ def test_allotment_update_model():
     m = AllotmentUpdate(status="Allotted", shares_allotted=26)
     assert m.status == "Allotted"
     assert m.shares_allotted == 26
+
+
+def test_allotment_update_accepts_negative_listing_price_override():
+    m = AllotmentUpdate(listing_price_override=-14.0)
+    assert m.listing_price_override == pytest.approx(-14.0)
+
+
+def test_allotment_update_rejects_non_finite_listing_price_override():
+    with pytest.raises(ValueError):
+        AllotmentUpdate(listing_price_override=float("nan"))
+
+
+def test_common_listing_price_request_accepts_negative():
+    m = CommonListingPriceRequest(ipo_id="i1", listing_price=-14.0)
+    assert m.listing_price == pytest.approx(-14.0)
+
+
+def test_effective_price_negative_override():
+    assert _effective_price({"listing_price_override": -14.0}, 92.0) == pytest.approx(-14.0)
+    assert _effective_price({"listing_price_override": None}, -14.0) == pytest.approx(-14.0)
+
+
+def test_subject2_buy_line_negative_sold_price():
+    row = _subject2_allotment_row("Allotted", 100, sold_price=-14.0)
+    line = _build_line_from_allotment(
+        row,
+        {},
+        {"p1": {"category": "Subject 2", "buy_rate": 98.0}},
+    )
+    assert line["sell_premium"] == pytest.approx(-14.0)
+    assert line["sell_amt"] == pytest.approx(-1400.0)
+    # Market below guarantee → client gets topped up (Payable).
+    assert line["net_pl"] == pytest.approx(-1400.0 - 9800.0)
+
+
+def test_premium_sell_side_negative_listing_market():
+    # Grey-market listing can be negative; market leg still flows through settlement math.
+    amounts = _sell_side_financials(
+        listing_sell_amt=400 * -14,
+        seller_vyaj=400 * 99,
+        buyer_vyaj=400 * 98,
+        recorded_brokerage=400,
+        premium=True,
+        client_amount=400 * 98,
+    )
+    assert amounts["sell_amt"] == pytest.approx(-5600.0)
+    assert amounts["settlement_difference"] == pytest.approx(44800.0)
+    assert amounts["net_pl"] == pytest.approx(-45200.0)
 
 
 def test_allotment_bulk_update_model():

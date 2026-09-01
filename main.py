@@ -2133,17 +2133,18 @@ async def ipo_finalize_settlement(admin: AdminAuth, settlement_id: str) -> JSONR
 @app.get("/api/ipo/settlements/{settlement_id}/export.xlsx")
 async def ipo_settlement_export(admin: AdminAuth, settlement_id: str) -> StreamingResponse:
     try:
-        xlsx_bytes = await asyncio.to_thread(build_settlement_excel, settlement_id)
+        xlsx_bytes, filename = await asyncio.to_thread(build_settlement_excel, settlement_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    safe_name = sanitize_download_filename(filename, fallback="IPO_final_settlement.xlsx")
     stream = io.BytesIO(xlsx_bytes)
     stream.seek(0)
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="IPO_Settlement.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
     )
 
 

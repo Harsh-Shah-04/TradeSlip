@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -23,13 +24,20 @@ class IpoMasterCreate(BaseModel):
     amount_retail_2minus: float | None = Field(default=None, ge=0)
     amount_shareholder_15k: float | None = Field(default=None, ge=0)
     amount_shareholder_2minus: float | None = Field(default=None, ge=0)
-    listing_price: float | None = Field(default=None, ge=0)
+    listing_price: float | None = None
 
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str) -> str:
         if value not in ("Upcoming", "Active", "Closed"):
             raise ValueError("status must be Upcoming, Active, or Closed")
+        return value
+
+    @field_validator("listing_price")
+    @classmethod
+    def validate_listing_price(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("listing_price must be a finite number")
         return value
 
     @field_validator("name", "display_name", "notes")
@@ -52,7 +60,7 @@ class IpoMasterUpdate(BaseModel):
     amount_retail_2minus: float | None = Field(default=None, ge=0)
     amount_shareholder_15k: float | None = Field(default=None, ge=0)
     amount_shareholder_2minus: float | None = Field(default=None, ge=0)
-    listing_price: float | None = Field(default=None, ge=0)
+    listing_price: float | None = None
     clear_listing_price: bool = False
     clear_amount_bhni: bool = False
     clear_amount_shni: bool = False
@@ -71,21 +79,42 @@ class IpoMasterUpdate(BaseModel):
             raise ValueError("status must be Upcoming, Active, or Closed")
         return value
 
+    @field_validator("listing_price")
+    @classmethod
+    def validate_listing_price(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("listing_price must be a finite number")
+        return value
+
 
 class AllotmentUpdate(BaseModel):
     status: str | None = None
     shares_allotted: int | None = Field(default=None, ge=0)
-    listing_price_override: float | None = Field(default=None, ge=0)
+    listing_price_override: float | None = None
     clear_listing_price_override: bool = False
     notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("listing_price_override")
+    @classmethod
+    def validate_listing_price_override(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("listing_price_override must be a finite number")
+        return value
 
 
 class AllotmentBulkItem(BaseModel):
     id: str = Field(min_length=1)
     status: str | None = None
     shares_allotted: int | None = Field(default=None, ge=0)
-    listing_price_override: float | None = Field(default=None, ge=0)
+    listing_price_override: float | None = None
     clear_listing_price_override: bool = False
+
+    @field_validator("listing_price_override")
+    @classmethod
+    def validate_listing_price_override(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("listing_price_override must be a finite number")
+        return value
 
 
 class AllotmentBulkUpdate(BaseModel):
@@ -98,8 +127,15 @@ class AllotmentSeedRequest(BaseModel):
 
 class CommonListingPriceRequest(BaseModel):
     ipo_id: str = Field(min_length=1)
-    listing_price: float | None = Field(default=None, ge=0)
+    listing_price: float | None = None
     clear_listing_price: bool = False
+
+    @field_validator("listing_price")
+    @classmethod
+    def validate_listing_price(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("listing_price must be a finite number")
+        return value
 
 
 class MarkSoldRequest(BaseModel):

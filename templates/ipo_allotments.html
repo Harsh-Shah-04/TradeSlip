@@ -28,7 +28,7 @@
   <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end border-t border-slate-100 pt-3">
     <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="listingPrice">Common sold price</label>
-      <input type="number" id="listingPrice" min="0" step="any" placeholder="Applies unless a row has its own price" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      <input type="number" id="listingPrice" step="any" placeholder="Applies unless a row has its own price" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
     </div>
     <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="sellDate">Sell date</label>
@@ -447,7 +447,7 @@
           <td class="px-3 py-2 text-right font-medium">${fmt(r.shares_allotted)}</td>
           <td class="px-3 py-2 text-right">${raw.buy_rate != null ? fmt(raw.buy_rate) : "—"}</td>
           <td class="px-3 py-2 text-right">
-            <input type="number" min="0" step="any" class="price-inp w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm" value="${overrideVal}" placeholder="${TradeSlip.escapeHtml(pricePlaceholder)}" title="Leave blank to use common sold price" />
+            <input type="number" step="any" class="price-inp w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm" value="${overrideVal}" placeholder="${TradeSlip.escapeHtml(pricePlaceholder)}" title="Leave blank to use common sold price" />
           </td>
           <td class="px-3 py-2 text-right font-semibold text-slate-800">${value == null ? "—" : fmt(value)}</td>
           <td class="px-3 py-2">${soldLabel}</td>
@@ -473,8 +473,8 @@
           applyDraft(id, { listing_price_override: null });
         } else {
           const n = Number(raw);
-          if (!Number.isFinite(n) || n < 0) {
-            alert("Listing sold price must be a number 0 or more.");
+          if (!Number.isFinite(n)) {
+            alert("Listing sold price must be a valid number.");
             paintTable(current);
             return;
           }
@@ -594,7 +594,7 @@
       const overrideVal = r.listing_price_override != null ? r.listing_price_override : "";
       const priceCell = isNotAllotted
         ? `<span class="text-slate-400">—</span>`
-        : `<input type="number" min="0" step="any" class="price-inp w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm" value="${overrideVal}" placeholder="${TradeSlip.escapeHtml(pricePlaceholder)}" title="Leave blank to use common sold price" />`;
+        : `<input type="number" step="any" class="price-inp w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm" value="${overrideVal}" placeholder="${TradeSlip.escapeHtml(pricePlaceholder)}" title="Leave blank to use common sold price" />`;
       const sharesCell = isNotAllotted
         ? `<span class="text-slate-500">0</span>`
         : fmt(r.shares_allotted);
@@ -636,8 +636,8 @@
           applyDraft(id, { listing_price_override: null });
         } else {
           const n = Number(raw);
-          if (!Number.isFinite(n) || n < 0) {
-            alert("Sold price must be a number 0 or more.");
+          if (!Number.isFinite(n)) {
+            alert("Sold price must be a valid number.");
             paintTable(current);
             return;
           }
@@ -1264,8 +1264,8 @@
     if (TradeSlip.isButtonLoading(btn)) return;
     const ipo_id = document.getElementById("ipoSelect").value;
     const raw = document.getElementById("listingPrice").value.trim();
-    if (raw !== "" && !(Number(raw) >= 0)) {
-      alert("Common sold price must be a number 0 or more.");
+    if (raw !== "" && !Number.isFinite(Number(raw))) {
+      alert("Common sold price must be a valid number.");
       return;
     }
     const body =

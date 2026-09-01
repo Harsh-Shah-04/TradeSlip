@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -1424,7 +1425,17 @@ def _sell_party_ledger_nets(ipo_id: str) -> dict[str, float]:
     return {k: float(_money(v)) for k, v in nets.items()}
 
 
-def build_settlement_excel(settlement_id: str) -> bytes:
+def _slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (value or "").strip())
+    return cleaned.strip("_")[:40]
+
+
+def settlement_export_filename(ipo_name: str) -> str:
+    slug = _slug(ipo_name) or "IPO"
+    return f"{slug}_final_settlement.xlsx"
+
+
+def build_settlement_excel(settlement_id: str) -> tuple[bytes, str]:
     data = get_settlement(settlement_id)
     lines = data.get("lines") or []
     party = data.get("party_summary") or _party_summary(lines)
@@ -1578,4 +1589,4 @@ def build_settlement_excel(settlement_id: str) -> bytes:
     ws1.cell(1, 11, title)
     buf = BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    return buf.getvalue(), settlement_export_filename(title)
