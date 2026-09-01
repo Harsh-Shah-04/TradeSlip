@@ -13,6 +13,8 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
+from utils.storage import parse_trade_date_partitions, safe_filename, storage_path_for
+
 
 # ---------------------------------------------------------------------------
 # Coordinate configuration
@@ -197,7 +199,7 @@ def chunks(items: list[TradeEntry], size: int) -> Iterable[list[TradeEntry]]:
         yield items[start : start + size]
 
 
-from utils.storage import safe_filename, parse_trade_date_partitions, storage_path_for
+def truncate_to_width(text: str, max_width: float, font_name: str, font_size: float) -> str:
     if stringWidth(text, font_name, font_size) <= max_width:
         return text
     suffix = "..."
