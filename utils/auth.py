@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 from fastapi import Response
 
-from utils.supabase_client import get_broker_by_id, upsert_broker_row, new_pooled_client
+from utils.supabase_client import get_broker_by_id, upsert_broker_row, get_pooled_client
 
 ACCESS_COOKIE_NAME = "broker_access_token"
 REFRESH_COOKIE_NAME = "broker_refresh_token"
@@ -28,15 +28,9 @@ _SESSION_CACHE_MAX = 512
 logger = logging.getLogger(__name__)
 _failed_logins: dict[str, deque[float]] = defaultdict(deque)
 _session_cache: dict[str, tuple[float, BrokerSession]] = {}
-_http_client: httpx.Client | None = None
-
-
 def _http() -> httpx.Client:
     """Reuse one client so warm serverless instances skip repeated TLS handshakes."""
-    global _http_client
-    if _http_client is None:
-        _http_client = new_pooled_client()
-    return _http_client
+    return get_pooled_client()
 
 
 def _token_key(access_token: str) -> str:

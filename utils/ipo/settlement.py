@@ -10,9 +10,15 @@ from io import BytesIO
 from typing import Any
 
 import httpx
-from openpyxl import Workbook
 
-from utils.ipo.allotments import list_active_allotments_for_settlement, drift_report
+from utils.ipo.allotments import (
+    _live_allocation_pairs,
+    _pair_key,
+    drift_report,
+    filter_active_allotments_for_settlement,
+    list_active_allotments_for_settlement,
+    list_allotments_raw,
+)
 from utils.ipo.categories import application_amount_from_ipo, is_premium, is_subject2
 from utils.ipo.ledger import post_settlement_entries, post_settlement_revisions
 from utils.ipo.models import (
@@ -21,7 +27,7 @@ from utils.ipo.models import (
 )
 from utils.ipo.sell_parties import sell_party_ids_by_name
 from utils.ipo.service import get_ipo
-from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
+from utils.supabase_client import _service_headers, _supabase_url, get_pooled_client
 
 SETTLEMENTS_TABLE = "ipo_settlements"
 LINES_TABLE = "ipo_settlement_lines"
@@ -29,11 +35,8 @@ HTTP_TIMEOUT = 30.0
 MONEY_QUANT = Decimal("0.0001")
 FINALIZE_LOCK_SECONDS = 180
 
-_http_client: httpx.Client | None = None
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _http() -> httpx.Client:
+    return get_pooled_client()
 
 
 def _acquire_finalize_lock(settlement_id: str) -> None:
@@ -84,11 +87,8 @@ def _release_finalize_lock(settlement_id: str) -> None:
     )
 
 
-def _http() -> httpx.Client:
-    global _http_client
-    if _http_client is None:
-        _http_client = new_pooled_client()
-    return _http_client
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _money(value: float | int | Decimal | str | None) -> Decimal:
@@ -193,19 +193,35 @@ def _sell_side_financials(
 
 def _positions_map(ipo_id: str) -> dict[str, dict[str, Any]]:
     """Position id → category / rates, used to apply category-specific settlement rules."""
+    return {
+        str(r["id"]): r
+        for r in _fetch_ipo_positions(ipo_id)
+        if r.get("id")
+    }
+
+
+def _fetch_ipo_positions(ipo_id: str) -> list[dict[str, Any]]:
     response = _http().get(
         f"{_supabase_url()}/rest/v1/ipo_positions",
         headers=_service_headers(),
         params={
-            "select": "id,party,category,buy_app,buy_rate,buy_amt",
+            "select": "id,party,party_id,category,buy_app,buy_amt,buy_rate",
             "ipo_id": f"eq.{ipo_id}",
             "limit": "5000",
         },
         timeout=HTTP_TIMEOUT,
     )
     if response.status_code != 200:
-        return {}
-    return {str(r["id"]): r for r in (response.json() or []) if r.get("id")}
+        return []
+    return response.json() or []
+
+
+def _premium_positions_from(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        p
+        for p in positions
+        if is_premium(p.get("category")) and float(p.get("buy_app") or 0) > 0
+    ]
 
 
 def _build_line_from_allotment(
@@ -423,32 +439,23 @@ def _party_ids_by_name(names: list[str]) -> dict[str, str]:
     return out
 
 
-def _premium_buy_lines(ipo_id: str) -> list[dict[str, Any]]:
+def _premium_buy_lines(
+    ipo_id: str,
+    *,
+    positions: list[dict[str, Any]] | None = None,
+    active_allotments: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Premium buy lines from listing allotment rows (fallback to position if not seeded).
 
     Like Subject 2: Guaranteed = Shares × Buy Rate, Market = Shares × Listing Sold
     Price, client settles only the difference. Pending until listing sale is recorded.
     """
-    response = _http().get(
-        f"{_supabase_url()}/rest/v1/ipo_positions",
-        headers=_service_headers(),
-        params={
-            "select": "id,party,party_id,category,buy_app,buy_amt,buy_rate",
-            "ipo_id": f"eq.{ipo_id}",
-            "limit": "5000",
-        },
-        timeout=HTTP_TIMEOUT,
-    )
-    if response.status_code != 200:
-        return []
-    premium_positions = [
-        r for r in (response.json() or []) if is_premium(r.get("category"))
-    ]
+    premium_positions = _premium_positions_from(positions or _fetch_ipo_positions(ipo_id))
     if not premium_positions:
         return []
 
     allot_by_pos: dict[str, dict[str, Any]] = {}
-    for row in list_active_allotments_for_settlement(ipo_id):
+    for row in active_allotments or list_active_allotments_for_settlement(ipo_id):
         pid = str(row.get("position_id") or "")
         if not pid or row.get("applicant_id") is not None:
             continue
@@ -560,7 +567,12 @@ def _party_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
+def _grey_market_sell_side(
+    ipo_id: str,
+    *,
+    positions: list[dict[str, Any]] | None = None,
+    active_allotments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Grey-market sells linked to allotments — Application and Premium are separate rows."""
     empty: dict[str, Any] = {
         "sell_party_summary": [],
@@ -568,32 +580,21 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
         "sell_party_totals": {},
         "grey_market_brokerage": 0.0,
     }
-    pos_resp = _http().get(
-        f"{_supabase_url()}/rest/v1/ipo_positions",
-        headers=_service_headers(),
-        params={
-            "select": "id,party,buy_rate,buy_app,category",
-            "ipo_id": f"eq.{ipo_id}",
-            "limit": "5000",
-        },
-        timeout=HTTP_TIMEOUT,
-    )
-    if pos_resp.status_code != 200:
-        return empty
-    positions = {
-        str(r["id"]): r for r in (pos_resp.json() or []) if r.get("id")
-    }
-    if not positions:
+    position_rows = positions or _fetch_ipo_positions(ipo_id)
+    positions_map = {str(r["id"]): r for r in position_rows if r.get("id")}
+    if not positions_map:
         return empty
 
-    allot_by_pos = _allotments_by_position(list_active_allotments_for_settlement(ipo_id))
+    allot_by_pos = _allotments_by_position(
+        active_allotments or list_active_allotments_for_settlement(ipo_id)
+    )
     # Remaining rows per position so each allotment is attributed at most once across sells.
     remaining_by_pos: dict[str, list[dict[str, Any]]] = {
         pid: list(rows) for pid, rows in allot_by_pos.items()
     }
 
     sell_lines: list[dict[str, Any]] = []
-    ids = list(positions.keys())
+    ids = list(positions_map.keys())
     for i in range(0, len(ids), 100):
         chunk = ids[i : i + 100]
         id_filter = "(" + ",".join(chunk) + ")"
@@ -614,7 +615,7 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
         if sell_resp.status_code != 200:
             continue
         for s in sell_resp.json() or []:
-            pos = positions.get(str(s.get("position_id")) or "") or {}
+            pos = positions_map.get(str(s.get("position_id")) or "") or {}
             sell_qty = float(s.get("sell_app") or 0)
             buy_app = float(pos.get("buy_app") or 0)
             buy_rate = float(pos.get("buy_rate") or 0)
@@ -795,16 +796,35 @@ def _grey_market_sell_side(ipo_id: str) -> dict[str, Any]:
 
 def preview_settlement(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
-    rows = list_active_allotments_for_settlement(ipo_id)
-    positions = _positions_map(ipo_id)
+    position_rows = _fetch_ipo_positions(ipo_id)
+    positions = {str(r["id"]): r for r in position_rows if r.get("id")}
+    live = _live_allocation_pairs(ipo_id)
+    live_keys = {_pair_key(p["position_id"], p["applicant_id"]) for p in live}
+    premium_positions = _premium_positions_from(position_rows)
+    premium_ids = {str(p["id"]) for p in premium_positions if p.get("id")}
+    raw_allotments = list_allotments_raw(ipo_id, include_archived=False)
+    rows = filter_active_allotments_for_settlement(
+        raw_allotments,
+        live_keys=live_keys,
+        premium_position_ids=premium_ids,
+    )
     lines = [
         line
         for line in (_build_line_from_allotment(r, ipo, positions) for r in rows)
         if line is not None
     ]
-    lines.extend(_premium_buy_lines(ipo_id))
+    lines.extend(
+        _premium_buy_lines(
+            ipo_id, positions=position_rows, active_allotments=rows
+        )
+    )
     warnings: list[str] = []
-    drift = drift_report(ipo_id)
+    drift = drift_report(
+        ipo_id,
+        allotments=raw_allotments,
+        live=live,
+        premium_positions=premium_positions,
+    )
     orphaned = int(drift.get("orphaned_count") or 0)
     if orphaned:
         warnings.append(
@@ -838,7 +858,9 @@ def preview_settlement(ipo_id: str) -> dict[str, Any]:
             "mark them sold on Allotments (Premium section) to settle the difference."
         )
     party = _party_summary(lines)
-    sell_side = _grey_market_sell_side(ipo_id)
+    sell_side = _grey_market_sell_side(
+        ipo_id, positions=position_rows, active_allotments=rows
+    )
     if not sell_side["sell_party_summary"]:
         warnings.append("No grey-market sells recorded yet (Ambica / Mama / sell parties).")
     return {
@@ -1436,6 +1458,8 @@ def settlement_export_filename(ipo_name: str) -> str:
 
 
 def build_settlement_excel(settlement_id: str) -> tuple[bytes, str]:
+    from openpyxl import Workbook
+
     data = get_settlement(settlement_id)
     lines = data.get("lines") or []
     party = data.get("party_summary") or _party_summary(lines)

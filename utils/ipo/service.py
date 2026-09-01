@@ -28,7 +28,7 @@ from utils.ipo.models import (
     position_to_json,
     sell_to_json,
 )
-from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
+from utils.supabase_client import _service_headers, _supabase_url, get_pooled_client
 
 MASTER_TABLE = "ipo_master"
 POSITIONS_TABLE = "ipo_positions"
@@ -39,11 +39,8 @@ LABELS_TABLE = "ipo_category_labels"
 HTTP_TIMEOUT = 30.0
 MONEY_QUANT = Decimal("0.0001")
 
-# One pooled client for the module. Without this every call paid a fresh
-# DNS + TCP + TLS handshake (~985ms measured) instead of reusing a keep-alive
-# connection (~150ms). `retries` only retries connection *establishment*, never
-# a request that was already sent, so it is safe for POST/PATCH.
-_HTTP = new_pooled_client()
+# One pooled client for the module. See utils/supabase_client.py for why.
+_HTTP = get_pooled_client()
 
 
 def _money(value: float | int | Decimal | str) -> Decimal:

@@ -653,7 +653,8 @@
       `/api/ipo/ledger/overview.xlsx?side=${encodeURIComponent(state.side === "all" ? "buyer" : state.side)}&include_settled=${state.showSettled}`;
     renderAccountRows();
     syncActionBar();
-    await loadSummary();
+    if (p.summary) renderFlow(p.summary);
+    else await loadSummary();
   }
 
   // ------------------------------------------------------------- person: one
@@ -974,6 +975,7 @@
         state.selectedCharges.clear();
         if (state.screen === "ipo") await openIpo(state.ipo.ipo.id);
         else await openAccount(state.account.account.account_id, state.account.account.account_type);
+        await loadSummary();
       } else {
         const payments = state.accounts
           .filter((a) => state.selectedAccounts.has(a.account_id))
@@ -991,7 +993,6 @@
         state.selectedAccounts.clear();
         await loadOverview();
       }
-      await loadSummary();
     } catch (e) {
       alert(e.message);
     } finally {
@@ -1223,7 +1224,6 @@
         const p = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(TradeSlip.parseErrorDetail(p));
         if (state.view === "ipo") await loadIpos(); else await loadOverview();
-        await loadSummary();
         alert(p.entries_created
           ? `Added ${p.entries_created} missing ledger entr${p.entries_created > 1 ? "ies" : "y"} from ${p.settlements_checked} finalized settlement(s).`
           : `Nothing missing — ${p.settlements_checked} finalized settlement(s) already posted.`);

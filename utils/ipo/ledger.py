@@ -27,10 +27,9 @@ from io import BytesIO
 from typing import Any
 
 import httpx
-from openpyxl import Workbook
 
 from utils.ipo.models import ledger_entry_to_json
-from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
+from utils.supabase_client import _service_headers, _supabase_url, get_pooled_client
 
 LEDGER_TABLE = "ipo_ledger_entries"
 ALLOCATIONS_TABLE = "ipo_ledger_allocations"
@@ -48,18 +47,12 @@ ACCOUNT_TYPES = (ACCOUNT_PARTY, ACCOUNT_SELL_PARTY)
 CHARGE_TYPES = ("Settlement", "Adjustment")
 PAYMENT_TYPES = ("PaymentReceived", "PaymentPaid")
 
-_http_client: httpx.Client | None = None
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _http() -> httpx.Client:
-    global _http_client
-    if _http_client is None:
-        _http_client = new_pooled_client()
-    return _http_client
+    return get_pooled_client()
 
 
 def _money(value: float | int | Decimal | str | None) -> Decimal:
@@ -268,28 +261,23 @@ def _ipo_names() -> dict[str, dict[str, Any]]:
 # --------------------------------------------------------------------- overview
 
 
-def ledger_overview(side: str = "buyer", *, include_settled: bool = False) -> dict[str, Any]:
-    """Every account on one side with its outstanding — the landing view."""
-    if (side or "").strip().casefold() in ("all", "everyone", "both"):
-        accounts = _combined_accounts(include_settled=include_settled)
-        return {
-            "side": "all",
-            "account_type": "all",
-            "accounts": accounts,
-            "totals": {
-                "to_receive": float(_money(sum(a["to_receive"] for a in accounts))),
-                "to_pay": float(_money(sum(a["to_pay"] for a in accounts))),
-                "balance": float(_money(sum(a["balance"] for a in accounts))),
-                "open_count": sum(int(a["open_count"]) for a in accounts),
-                "account_count": len(accounts),
-            },
-        }
-    account_type = side_to_account_type(side)
-    names = _account_names(account_type)
-    entries = _fetch_entries(account_type=account_type)
+def _ledger_snapshot() -> dict[str, Any]:
+    """Shared ledger data for overview + summary (one round-trip set)."""
     allocated = _allocated_by_entry(_fetch_allocations())
-    column = _account_column(account_type)
+    names = {t: _account_names(t) for t in ACCOUNT_TYPES}
+    entries = {t: _fetch_entries(account_type=t) for t in ACCOUNT_TYPES}
+    return {"allocated": allocated, "names": names, "entries": entries}
 
+
+def _build_accounts_for_type(
+    account_type: str,
+    *,
+    entries: list[dict[str, Any]],
+    allocated: dict[str, float],
+    names: dict[str, dict[str, Any]],
+    include_settled: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    column = _account_column(account_type)
     by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
         key = str(entry.get(column) or "")
@@ -319,7 +307,6 @@ def ledger_overview(side: str = "buyer", *, include_settled: bool = False) -> di
             continue
         accounts.append(record)
 
-    # Biggest pending first, then by name.
     accounts.sort(key=lambda a: (-abs(float(a["balance"])), (a["name"] or "").lower()))
     totals = {
         "to_receive": float(_money(sum(a["to_receive"] for a in accounts))),
@@ -328,16 +315,82 @@ def ledger_overview(side: str = "buyer", *, include_settled: bool = False) -> di
         "open_count": sum(int(a["open_count"]) for a in accounts),
         "account_count": len(accounts),
     }
-    return {"side": side, "account_type": account_type, "accounts": accounts, "totals": totals}
+    return accounts, totals
 
 
-def _combined_accounts(*, include_settled: bool = False) -> list[dict[str, Any]]:
-    """Clients and sell parties in one list, each tagged with its side."""
-    rows: list[dict[str, Any]] = []
-    for account_type in ACCOUNT_TYPES:
-        rows.extend(ledger_overview(account_type, include_settled=include_settled)["accounts"])
-    rows.sort(key=lambda a: (-abs(float(a["balance"])), (a["name"] or "").lower()))
-    return rows
+def _totals_from_accounts(accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "to_receive": float(_money(sum(a["to_receive"] for a in accounts))),
+        "to_pay": float(_money(sum(a["to_pay"] for a in accounts))),
+        "balance": float(_money(sum(a["balance"] for a in accounts))),
+        "open_count": sum(int(a["open_count"]) for a in accounts),
+        "account_count": len(accounts),
+    }
+
+
+def _summary_from_totals(buyers: dict[str, Any], sellers: dict[str, Any]) -> dict[str, Any]:
+    collect = float(_money(buyers["to_receive"] + sellers["to_receive"]))
+    give = float(_money(buyers["to_pay"] + sellers["to_pay"]))
+    return {
+        "buyers": buyers,
+        "sellers": sellers,
+        "collect_from_sellers": sellers["to_receive"],
+        "collect_from_clients": buyers["to_receive"],
+        "give_to_clients": buyers["to_pay"],
+        "give_to_sellers": sellers["to_pay"],
+        "collect_total": collect,
+        "give_total": give,
+        "net": float(_money(collect - give)),
+        "open_count": int(buyers["open_count"]) + int(sellers["open_count"]),
+    }
+
+
+def ledger_overview(side: str = "buyer", *, include_settled: bool = False) -> dict[str, Any]:
+    """Every account on one side with its outstanding — the landing view."""
+    snapshot = _ledger_snapshot()
+    allocated = snapshot["allocated"]
+    names = snapshot["names"]
+    entries_by_type = snapshot["entries"]
+
+    buyer_accounts, buyer_totals = _build_accounts_for_type(
+        ACCOUNT_PARTY,
+        entries=entries_by_type[ACCOUNT_PARTY],
+        allocated=allocated,
+        names=names[ACCOUNT_PARTY],
+        include_settled=include_settled,
+    )
+    seller_accounts, seller_totals = _build_accounts_for_type(
+        ACCOUNT_SELL_PARTY,
+        entries=entries_by_type[ACCOUNT_SELL_PARTY],
+        allocated=allocated,
+        names=names[ACCOUNT_SELL_PARTY],
+        include_settled=include_settled,
+    )
+    summary = _summary_from_totals(buyer_totals, seller_totals)
+
+    if (side or "").strip().casefold() in ("all", "everyone", "both"):
+        accounts = buyer_accounts + seller_accounts
+        accounts.sort(key=lambda a: (-abs(float(a["balance"])), (a["name"] or "").lower()))
+        return {
+            "side": "all",
+            "account_type": "all",
+            "accounts": accounts,
+            "totals": _totals_from_accounts(accounts),
+            "summary": summary,
+        }
+
+    account_type = side_to_account_type(side)
+    if account_type == ACCOUNT_SELL_PARTY:
+        accounts, totals = seller_accounts, seller_totals
+    else:
+        accounts, totals = buyer_accounts, buyer_totals
+    return {
+        "side": side,
+        "account_type": account_type,
+        "accounts": accounts,
+        "totals": totals,
+        "summary": summary,
+    }
 
 
 def ledger_by_ipo(ipo_id: str) -> dict[str, Any]:
@@ -454,25 +507,25 @@ def ledger_summary() -> dict[str, Any]:
     Both sides in one payload, so the page never shows a half-truth like
     "to receive 0" just because the Clients tab happens to be open.
     """
-    buyers = ledger_overview(ACCOUNT_PARTY)["totals"]
-    sellers = ledger_overview(ACCOUNT_SELL_PARTY)["totals"]
-
-    collect = float(_money(buyers["to_receive"] + sellers["to_receive"]))
-    give = float(_money(buyers["to_pay"] + sellers["to_pay"]))
-    return {
-        "buyers": buyers,
-        "sellers": sellers,
-        # Headline flow, in the order the money actually moves.
-        "collect_from_sellers": sellers["to_receive"],
-        "collect_from_clients": buyers["to_receive"],
-        "give_to_clients": buyers["to_pay"],
-        "give_to_sellers": sellers["to_pay"],
-        "collect_total": collect,
-        "give_total": give,
-        # What is left over once everything is collected and paid out.
-        "net": float(_money(collect - give)),
-        "open_count": int(buyers["open_count"]) + int(sellers["open_count"]),
-    }
+    snapshot = _ledger_snapshot()
+    allocated = snapshot["allocated"]
+    names = snapshot["names"]
+    entries_by_type = snapshot["entries"]
+    _, buyer_totals = _build_accounts_for_type(
+        ACCOUNT_PARTY,
+        entries=entries_by_type[ACCOUNT_PARTY],
+        allocated=allocated,
+        names=names[ACCOUNT_PARTY],
+        include_settled=False,
+    )
+    _, seller_totals = _build_accounts_for_type(
+        ACCOUNT_SELL_PARTY,
+        entries=entries_by_type[ACCOUNT_SELL_PARTY],
+        allocated=allocated,
+        names=names[ACCOUNT_SELL_PARTY],
+        include_settled=False,
+    )
+    return _summary_from_totals(buyer_totals, seller_totals)
 
 
 # ---------------------------------------------------------------- single account
@@ -1126,6 +1179,8 @@ def delete_ledger_entry(entry_id: str) -> dict[str, Any]:
 def build_statement_excel(
     account_id: str, account_name: str = "", account_type: str = ACCOUNT_PARTY
 ) -> bytes:
+    from openpyxl import Workbook
+
     data = account_ledger(account_type, account_id)
     wb = Workbook()
 
@@ -1174,6 +1229,8 @@ def build_statement_excel(
 
 
 def build_overview_excel(side: str = "buyer", *, include_settled: bool = False) -> bytes:
+    from openpyxl import Workbook
+
     data = ledger_overview(side, include_settled=include_settled)
     wb = Workbook()
     ws = wb.active

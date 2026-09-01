@@ -17,7 +17,7 @@ import httpx
 from utils.ipo.categories import is_premium
 from utils.ipo.models import AllotmentUpdate, allotment_to_json
 from utils.ipo.service import get_ipo
-from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
+from utils.supabase_client import _service_headers, _supabase_url, get_pooled_client
 
 ALLOTMENTS_TABLE = "ipo_allotments"
 ALLOCATIONS_TABLE = "ipo_position_allocations"
@@ -26,18 +26,12 @@ HTTP_TIMEOUT = 30.0
 MONEY_QUANT = Decimal("0.0001")
 CHUNK = 100
 
-_http_client: httpx.Client | None = None
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _http() -> httpx.Client:
-    global _http_client
-    if _http_client is None:
-        _http_client = new_pooled_client()
-    return _http_client
+    return get_pooled_client()
 
 
 def _money(value: float | int | Decimal | str | None) -> Decimal:
@@ -308,11 +302,25 @@ def get_allotment(allotment_id: str) -> dict[str, Any]:
     return rows[0]
 
 
-def drift_report(ipo_id: str) -> dict[str, Any]:
-    live = _live_allocation_pairs(ipo_id)
+def drift_report(
+    ipo_id: str,
+    *,
+    allotments: list[dict[str, Any]] | None = None,
+    live: list[dict[str, Any]] | None = None,
+    premium_positions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    live = live if live is not None else _live_allocation_pairs(ipo_id)
     live_keys = {_pair_key(p["position_id"], p["applicant_id"]) for p in live}
-    premium_ids = {str(p["id"]) for p in _premium_positions(ipo_id) if p.get("id")}
-    allotments = list_allotments_raw(ipo_id, include_archived=False)
+    premium_ids = (
+        {str(p["id"]) for p in premium_positions if p.get("id")}
+        if premium_positions is not None
+        else {str(p["id"]) for p in _premium_positions(ipo_id) if p.get("id")}
+    )
+    allotments = (
+        allotments
+        if allotments is not None
+        else list_allotments_raw(ipo_id, include_archived=False)
+    )
     allot_keys: set[str] = set()
     premium_seeded: set[str] = set()
     orphaned: list[dict[str, Any]] = []
@@ -353,10 +361,11 @@ def drift_report(ipo_id: str) -> dict[str, Any]:
 
 def list_allotments(ipo_id: str) -> dict[str, Any]:
     ipo = get_ipo(ipo_id, include_trade_count=False)
-    rows = [allotment_to_json(r) for r in list_allotments_raw(ipo_id)]
+    raw_rows = list_allotments_raw(ipo_id)
+    rows = [allotment_to_json(r) for r in raw_rows]
     application_rows = [r for r in rows if not r.get("is_premium")]
     premium_rows = [r for r in rows if r.get("is_premium")]
-    drift = drift_report(ipo_id)
+    drift = drift_report(ipo_id, allotments=raw_rows)
     counts = {
         "pending": sum(1 for r in application_rows if r["status"] == "Pending"),
         "allotted": sum(1 for r in application_rows if r["status"] == "Allotted"),

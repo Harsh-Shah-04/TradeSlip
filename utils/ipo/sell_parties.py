@@ -8,14 +8,14 @@ from typing import Any
 import httpx
 
 from utils.ipo.models import SellPartyCreate, SellPartyUpdate, sell_party_to_json
-from utils.supabase_client import _service_headers, _supabase_url, new_pooled_client
+from utils.supabase_client import _service_headers, _supabase_url, get_pooled_client
 
 SELL_PARTIES_TABLE = "ipo_sell_parties"
 SELLS_TABLE = "ipo_sells"
 HTTP_TIMEOUT = 30.0
 
 # One pooled client for the module. See utils/supabase_client.py for why.
-_HTTP = new_pooled_client()
+_HTTP = get_pooled_client()
 
 
 def _now() -> str:

@@ -10,7 +10,7 @@ from urllib.parse import quote
 import httpx
 
 from utils.config import DEFAULT_TEMPLATE_PATH
-from utils.pdf_processor import storage_path_for
+from utils.storage import storage_path_for
 
 BUCKET_NAME = "trade-slips"
 TABLE_NAME = "daily_trade_slips"
@@ -42,6 +42,11 @@ class _PooledTransport(httpx.HTTPTransport):
             if request.method.upper() not in self._REPLAYABLE:
                 raise
             return super().handle_request(request)
+
+
+def get_pooled_client(timeout: float = HTTP_TIMEOUT) -> httpx.Client:
+    """Process-wide pooled httpx client (reuse warm TLS connections)."""
+    return _HTTP
 
 
 def new_pooled_client(timeout: float = HTTP_TIMEOUT) -> httpx.Client:
