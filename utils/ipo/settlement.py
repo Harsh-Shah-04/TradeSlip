@@ -22,6 +22,8 @@ from utils.ipo.allotments import (
 from utils.ipo.categories import application_amount_from_ipo, is_premium, is_subject2
 from utils.ipo.ledger import post_settlement_entries, post_settlement_revisions
 from utils.ipo.models import (
+    TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT,
+    TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
     settlement_line_to_json,
     settlement_to_json,
 )
@@ -119,6 +121,7 @@ def _sell_side_financials(
     premium: bool,
     subject2: bool = False,
     client_amount: float = 0.0,
+    trade_direction: str = TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
 ) -> dict[str, float]:
     """Return sell-party settlement amounts without mixing buyer cost and brokerage."""
     if subject2:
@@ -164,11 +167,12 @@ def _sell_side_financials(
         guaranteed = _money(client_amount) if client_amount else _money(buyer_vyaj)
         contract = _money(seller_vyaj)
         difference = guaranteed - market
-        brokerage = (
-            float(_money(recorded_brokerage))
-            if recorded_brokerage is not None
-            else float(contract - guaranteed)
+        implied_brokerage = float(
+            guaranteed - contract
+            if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            else contract - guaranteed
         )
+        brokerage = abs(implied_brokerage)
         return {
             "sell_amt": float(market),
             "market_amount": float(market),
@@ -177,7 +181,11 @@ def _sell_side_financials(
             "brokerage": brokerage,
             "profit": max(brokerage, 0.0),
             "loss": max(-brokerage, 0.0),
-            "net_pl": float(market - contract),
+            "net_pl": _premium_sell_party_net_pl(
+                contract=float(contract),
+                market=float(market),
+                trade_direction=trade_direction,
+            ),
         }
     return {
         "sell_amt": float(_money(listing_sell_amt)),
@@ -205,7 +213,10 @@ def _fetch_ipo_positions(ipo_id: str) -> list[dict[str, Any]]:
         f"{_supabase_url()}/rest/v1/ipo_positions",
         headers=_service_headers(),
         params={
-            "select": "id,party,party_id,category,buy_app,buy_amt,buy_rate",
+            "select": (
+                "id,party,party_id,category,buy_app,buy_amt,buy_rate,"
+                "trade_direction,counterparty_sell_party,counterparty_sell_party_id"
+            ),
             "ipo_id": f"eq.{ipo_id}",
             "limit": "5000",
         },
@@ -222,6 +233,31 @@ def _premium_positions_from(positions: list[dict[str, Any]]) -> list[dict[str, A
         for p in positions
         if is_premium(p.get("category")) and float(p.get("buy_app") or 0) > 0
     ]
+
+
+def _position_trade_direction(position: dict[str, Any]) -> str:
+    value = str(position.get("trade_direction") or "").strip()
+    return value or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY
+
+
+def _position_client_account(position: dict[str, Any]) -> dict[str, str | None]:
+    return {
+        "party_id": str(position.get("party_id") or "") or None,
+        "party_name": str(position.get("party") or "").strip() or "—",
+        "trade_direction": _position_trade_direction(position),
+    }
+
+
+def _premium_client_net_pl(*, guaranteed: float, market: float, trade_direction: str) -> float:
+    if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        return float(_money(guaranteed) - _money(market))
+    return float(_money(market) - _money(guaranteed))
+
+
+def _premium_sell_party_net_pl(*, contract: float, market: float, trade_direction: str) -> float:
+    if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        return float(_money(contract) - _money(market))
+    return float(_money(market) - _money(contract))
 
 
 def _build_line_from_allotment(
@@ -464,7 +500,11 @@ def _premium_buy_lines(
     party_ids = _party_ids_by_name([str(r.get("party") or "") for r in premium_positions])
     lines: list[dict[str, Any]] = []
     for pos in premium_positions:
-        party = str(pos.get("party") or "").strip() or "—"
+        client_account = _position_client_account(pos)
+        party = str(client_account["party_name"] or "—")
+        trade_direction = str(
+            client_account["trade_direction"] or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY
+        )
         buy_rate = float(_money(pos.get("buy_rate")))
         shares = int(round(float(pos.get("buy_app") or 0)))
         guaranteed = float(_money(shares) * _money(buy_rate)) if shares > 0 else 0.0
@@ -476,7 +516,11 @@ def _premium_buy_lines(
             guaranteed = float(_money(shares) * _money(buy_rate)) if shares > 0 else 0.0
             sell_amt = float(_money(shares) * _money(market_rate))
             sell_premium = market_rate
-            net_pl = float(_money(sell_amt) - _money(guaranteed))
+            net_pl = _premium_client_net_pl(
+                guaranteed=guaranteed,
+                market=sell_amt,
+                trade_direction=trade_direction,
+            )
             is_sold = True
             allotment_id = str(allot.get("id") or "") or None
         elif shares <= 0:
@@ -489,10 +533,7 @@ def _premium_buy_lines(
             sell_amt = sell_premium = net_pl = 0.0
             is_sold = False
             allotment_id = str(allot.get("id") or "") if allot else None
-        party_id = (
-            str(pos.get("party_id") or "")
-            or party_ids.get(party.casefold())
-        )
+        party_id = str(client_account["party_id"] or "") or party_ids.get(party.casefold())
         lines.append(
             {
                 "allotment_id": allotment_id,
@@ -518,6 +559,7 @@ def _premium_buy_lines(
                 "is_premium": True,
                 "premium_pending": premium_pending,
                 "line_type": "Premium",
+                "trade_direction": trade_direction,
             }
         )
     lines.sort(key=lambda l: (l["party_name"].lower(), l["position_id"] or ""))
@@ -660,6 +702,7 @@ def _grey_market_sell_side(
                     recorded_brokerage=recorded_brokerage,
                     premium=True,
                     client_amount=guaranteed_amount,
+                    trade_direction=_position_trade_direction(pos),
                 )
             elif subject2:
                 # Subject 2 settles on allotted shares, never on applications.
@@ -713,10 +756,11 @@ def _grey_market_sell_side(
                     "sell_party_display": (
                         f"{sell_party} ({line_type})" if line_type != "Application" else sell_party
                     ),
-                    "buy_party": pos.get("party") or "—",
+                    "buy_party": _position_client_account(pos).get("party_name") or "—",
                     "is_premium": premium,
                     "is_subject2": subject2,
                     "line_type": line_type,
+                    "trade_direction": _position_trade_direction(pos),
                     "applied": applied,
                     "allotted": allotted,
                     "shares_allotted": shares_allotted,

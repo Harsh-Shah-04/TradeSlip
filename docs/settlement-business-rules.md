@@ -94,6 +94,17 @@ Shares are already fixed at trade time (no Pending / Not Allotted status). A
 Premium listing row is seeded on the Allotments page so the actual **Listing
 Sold Price** can be recorded — same role as Subject 2.
 
+Premium can now be entered in either direction on the Positions page:
+
+- `client_to_counterparty`: existing flow, where the client is the original
+  seller and the counterparty (`MAMA`, `AIRAN`, etc.) is the buyer.
+- `counterparty_to_client`: reverse flow, where the client is the buyer and the
+  counterparty is the seller.
+
+The settlement formula does not change. Trade direction changes only which side
+the trade-entry form is describing; the buy/client leg still settles the client
+account, and the sell-side contract still settles the sell-party account.
+
 - **Guaranteed** = Shares × Buy Rate
 - **Market** = Shares × Listing Sold Price (from Allotments)
 - **Contract with sell party** = Shares × Sell Rate (Ambica / Mama) — used only

@@ -474,17 +474,32 @@ def ipos_with_ledger() -> list[dict[str, Any]]:
         charges = [r for r in rows if r.get("entry_type") in CHARGE_TYPES]
         collect = Decimal("0")
         give = Decimal("0")
+        collect_from_sellers = Decimal("0")
+        collect_from_clients = Decimal("0")
+        pay_clients = Decimal("0")
+        pay_sellers = Decimal("0")
+        brokerage = Decimal("0")
         open_count = 0
         for charge in charges:
             amount = float(charge.get("amount") or 0)
+            brokerage += _money(amount)
             paid = float(allocated.get(str(charge.get("id") or ""), 0.0))
             outstanding = _outstanding(amount, paid)
+            is_seller = bool(charge.get("sell_party_id"))
             if outstanding > EPSILON:
                 open_count += 1
                 if amount > 0:
                     collect += _money(outstanding)
+                    if is_seller:
+                        collect_from_sellers += _money(outstanding)
+                    else:
+                        collect_from_clients += _money(outstanding)
                 else:
                     give += _money(outstanding)
+                    if is_seller:
+                        pay_sellers += _money(outstanding)
+                    else:
+                        pay_clients += _money(outstanding)
         out.append(
             {
                 "ipo_id": ipo_id,
@@ -495,6 +510,12 @@ def ipos_with_ledger() -> list[dict[str, Any]]:
                 "collect": float(collect),
                 "give": float(give),
                 "net": float(collect - give),
+                "collect_from_sellers": float(collect_from_sellers),
+                "collect_from_clients": float(collect_from_clients),
+                "pay_clients": float(pay_clients),
+                "pay_sellers": float(pay_sellers),
+                "brokerage": float(brokerage),
+                "status": "Open" if open_count else "Settled",
             }
         )
     out.sort(key=lambda i: (i["listing_date"] or "", i["name"]), reverse=True)

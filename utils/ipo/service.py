@@ -13,7 +13,7 @@ from utils.ipo.categories import (
     validate_category_pair,
 )
 from utils.ipo.clients import get_applicant, get_party
-from utils.ipo.sell_parties import resolve_active_sell_party_name
+from utils.ipo.sell_parties import resolve_active_sell_party_name, sell_party_ids_by_name
 from utils.ipo.models import (
     AllocationSet,
     IpoMasterCreate,
@@ -22,6 +22,8 @@ from utils.ipo.models import (
     PositionUpdate,
     SellCreate,
     SellUpdate,
+    TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
+    TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT,
     applicant_to_json,
     compute_position_status,
     master_to_json,
@@ -52,6 +54,7 @@ def _calc_brokerage(
     sell_rate: float | Decimal,
     buy_rate: float | Decimal,
     category: str | None = None,
+    trade_direction: str = TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
 ) -> Decimal | None:
     """Earned brokerage = sell amount − buy amount for the sold quantity.
 
@@ -62,6 +65,10 @@ def _calc_brokerage(
         return None
     sell_amt = _money(sell_app) * _money(sell_rate)
     buy_amt_for_sold = _money(sell_app) * _money(buy_rate)
+    if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        return (buy_amt_for_sold - sell_amt).quantize(
+            MONEY_QUANT, rounding=ROUND_HALF_UP
+        )
     return (sell_amt - buy_amt_for_sold).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
@@ -574,6 +581,9 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
         "trade_date": payload.trade_date,
         "party_id": payload.party_id,
         "party": party_name,
+        "trade_direction": payload.trade_direction,
+        "counterparty_sell_party": "",
+        "counterparty_sell_party_id": None,
         "category": category,
         "sub_category": sub_category,
         "category_group": category_group_for(sub_category) or category,
@@ -612,8 +622,19 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
-    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"], position.get("category"))
+    brokerage = _calc_brokerage(
+        sell_app,
+        sell_rate,
+        position["buy_rate"],
+        position.get("category"),
+        trade_direction=payload.trade_direction,
+    )
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
+    counterparty_ids = (
+        sell_party_ids_by_name([sell_party_name])
+        if payload.trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+        else {}
+    )
     sell_row = {
         "broker_id": broker_id,
         "position_id": position_id,
@@ -641,9 +662,31 @@ def create_position(broker_id: str, payload: PositionCreate) -> dict[str, Any]:
     sell_data = sell_response.json()
     sell_created = sell_data[0] if isinstance(sell_data, list) and sell_data else sell_data
     sell = sell_to_json(sell_created)
+    if payload.trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        _HTTP.patch(
+            f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+            json={
+                "counterparty_sell_party": sell_party_name,
+                "counterparty_sell_party_id": counterparty_ids.get(sell_party_name.casefold()),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
     buy_app = float(position["buy_app"])
     return {
         **position,
+        "counterparty_sell_party": (
+            sell_party_name
+            if payload.trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            else position.get("counterparty_sell_party") or ""
+        ),
+        "counterparty_sell_party_id": (
+            counterparty_ids.get(sell_party_name.casefold())
+            if payload.trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            else position.get("counterparty_sell_party_id")
+        ),
         "sells": [sell],
         "sold_app": sell_app,
         "remaining_app": max(buy_app - sell_app, 0.0),
@@ -683,6 +726,22 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
             if payload.sub_category is not None
             else (existing.get("sub_category") or ""),
         )
+    trade_direction = payload.trade_direction or (
+        existing.get("trade_direction") or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY
+    )
+    if (
+        trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+        and not is_premium(category)
+    ):
+        raise ValueError("Reverse-side trading is supported only for Premium right now.")
+    if (
+        payload.trade_direction is not None
+        and payload.trade_direction != existing.get("trade_direction")
+        and existing["sold_app"] > 0
+    ):
+        raise ValueError(
+            "Remove sells before changing the trade direction."
+        )
 
     buy_rate = payload.buy_rate if payload.buy_rate is not None else existing["buy_rate"]
     buy_amt = (_money(buy_app) * _money(buy_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -710,12 +769,23 @@ def update_position(broker_id: str, position_id: str, payload: PositionUpdate) -
         "trade_date": payload.trade_date or existing["trade_date"],
         "party_id": party_id,
         "party": party_name,
+        "trade_direction": trade_direction,
         "category": category,
         "sub_category": sub_category,
         "category_group": category_group_for(sub_category) or category,
         "buy_app": float(_money(buy_app)),
         "buy_rate": float(_money(buy_rate)),
         "buy_amt": float(buy_amt),
+        "counterparty_sell_party": (
+            existing.get("counterparty_sell_party") or ""
+            if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            else ""
+        ),
+        "counterparty_sell_party_id": (
+            existing.get("counterparty_sell_party_id")
+            if trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            else None
+        ),
         "updated_at": _now(),
     }
     response = _HTTP.patch(
@@ -765,7 +835,11 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
         MONEY_QUANT, rounding=ROUND_HALF_UP
     )
     brokerage = _calc_brokerage(
-        payload.sell_app, payload.sell_rate, position["buy_rate"], position.get("category")
+        payload.sell_app,
+        payload.sell_rate,
+        position["buy_rate"],
+        position.get("category"),
+        trade_direction=position.get("trade_direction") or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
     )
     sell_party_name = resolve_active_sell_party_name(payload.sell_party)
     row = {
@@ -793,6 +867,21 @@ def create_sell(broker_id: str, position_id: str, payload: SellCreate) -> dict[s
     data = response.json()
     created = data[0] if isinstance(data, list) and data else data
     sell = sell_to_json(created)
+    if position.get("trade_direction") == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        counterparty_ids = sell_party_ids_by_name([sell["sell_party"]])
+        _HTTP.patch(
+            f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+            json={
+                "counterparty_sell_party": sell["sell_party"],
+                "counterparty_sell_party_id": counterparty_ids.get(
+                    str(sell["sell_party"] or "").casefold()
+                ),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
     sells = list(position.get("sells") or []) + [sell]
     sold_app = sum(float(s["sell_app"]) for s in sells)
     buy_app = float(position["buy_app"])
@@ -824,7 +913,13 @@ def update_sell(
 
     sell_rate = payload.sell_rate if payload.sell_rate is not None else existing_sell["sell_rate"]
     sell_amt = (_money(sell_app) * _money(sell_rate)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
-    brokerage = _calc_brokerage(sell_app, sell_rate, position["buy_rate"], position.get("category"))
+    brokerage = _calc_brokerage(
+        sell_app,
+        sell_rate,
+        position["buy_rate"],
+        position.get("category"),
+        trade_direction=position.get("trade_direction") or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
+    )
 
     patch = {
         "sell_date": payload.sell_date or existing_sell["sell_date"],
@@ -855,6 +950,24 @@ def update_sell(
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Update sell failed ({response.status_code}): {response.text[:300]}")
+    if position.get("trade_direction") == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        next_name = (
+            resolve_active_sell_party_name(payload.sell_party)
+            if payload.sell_party is not None
+            else existing_sell["sell_party"]
+        )
+        counterparty_ids = sell_party_ids_by_name([next_name])
+        _HTTP.patch(
+            f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+            json={
+                "counterparty_sell_party": next_name,
+                "counterparty_sell_party_id": counterparty_ids.get(next_name.casefold()),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
     return {"position": get_position(broker_id, position_id)}
 
 
@@ -874,6 +987,21 @@ def delete_sell(broker_id: str, position_id: str, sell_id: str) -> dict[str, Any
     )
     if response.status_code not in (200, 204):
         raise RuntimeError(f"Delete sell failed ({response.status_code}): {response.text[:300]}")
+    if position.get("trade_direction") == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT:
+        remaining = [s for s in position.get("sells") or [] if s["id"] != sell_id]
+        next_name = (remaining[0]["sell_party"] if remaining else "") or ""
+        counterparty_ids = sell_party_ids_by_name([next_name]) if next_name else {}
+        _HTTP.patch(
+            f"{_supabase_url()}/rest/v1/{POSITIONS_TABLE}",
+            headers=_service_headers({"Content-Type": "application/json"}),
+            params={"id": f"eq.{position_id}", "broker_id": f"eq.{broker_id}"},
+            json={
+                "counterparty_sell_party": next_name,
+                "counterparty_sell_party_id": counterparty_ids.get(next_name.casefold()),
+                "updated_at": _now(),
+            },
+            timeout=HTTP_TIMEOUT,
+        )
     return get_position(broker_id, position_id)
 
 

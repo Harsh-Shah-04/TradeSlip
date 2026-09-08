@@ -10,6 +10,14 @@ def _strip(value: str) -> str:
     return value.strip()
 
 
+TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY = "client_to_counterparty"
+TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT = "counterparty_to_client"
+TRADE_DIRECTIONS = (
+    TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY,
+    TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT,
+)
+
+
 class IpoMasterCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     display_name: str = Field(default="", max_length=200)
@@ -393,6 +401,7 @@ class PositionCreate(BaseModel):
     ipo_id: str = Field(min_length=1)
     trade_date: str = Field(min_length=10, max_length=10)
     party_id: str = Field(min_length=1)
+    trade_direction: str = Field(default=TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY)
     category: str = Field(min_length=1, max_length=100)
     sub_category: str = Field(default="", max_length=100)
     buy_app: float = Field(gt=0)
@@ -409,6 +418,16 @@ class PositionCreate(BaseModel):
     def strip_cat(cls, value: str) -> str:
         return _strip(value)
 
+    @field_validator("trade_direction")
+    @classmethod
+    def validate_trade_direction(cls, value: str) -> str:
+        value = _strip(value)
+        if value not in TRADE_DIRECTIONS:
+            raise ValueError(
+                "trade_direction must be client_to_counterparty or counterparty_to_client"
+            )
+        return value
+
     @field_validator("sell_party")
     @classmethod
     def strip_sell_party(cls, value: str | None) -> str | None:
@@ -418,11 +437,18 @@ class PositionCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_optional_sell(self) -> PositionCreate:
-        from utils.ipo.categories import validate_category_pair
+        from utils.ipo.categories import is_premium, validate_category_pair
 
         cat, sub = validate_category_pair(self.category, self.sub_category)
         object.__setattr__(self, "category", cat)
         object.__setattr__(self, "sub_category", sub)
+        if (
+            self.trade_direction == TRADE_DIRECTION_COUNTERPARTY_TO_CLIENT
+            and not is_premium(cat)
+        ):
+            raise ValueError(
+                "Reverse-side trading is supported only for Premium right now."
+            )
 
         if not self.include_sell:
             return self
@@ -452,11 +478,24 @@ class PositionCreate(BaseModel):
 class PositionUpdate(BaseModel):
     trade_date: str | None = Field(default=None, min_length=10, max_length=10)
     party_id: str | None = None
+    trade_direction: str | None = None
     category: str | None = Field(default=None, min_length=1, max_length=100)
     sub_category: str | None = Field(default=None, max_length=100)
     buy_app: float | None = Field(default=None, gt=0)
     buy_rate: float | None = Field(default=None, ge=0)
     ipo_id: str | None = None
+
+    @field_validator("trade_direction")
+    @classmethod
+    def validate_trade_direction(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = _strip(value)
+        if value not in TRADE_DIRECTIONS:
+            raise ValueError(
+                "trade_direction must be client_to_counterparty or counterparty_to_client"
+            )
+        return value
 
 
 class SellCreate(BaseModel):
@@ -777,6 +816,13 @@ def position_to_json(
         "trade_date": _iso(row.get("trade_date")),
         "party_id": str(row.get("party_id") or "") or None,
         "party": row.get("party"),
+        "trade_direction": (
+            row.get("trade_direction") or TRADE_DIRECTION_CLIENT_TO_COUNTERPARTY
+        ),
+        "counterparty_sell_party_id": (
+            str(row.get("counterparty_sell_party_id") or "") or None
+        ),
+        "counterparty_sell_party": row.get("counterparty_sell_party") or "",
         "category": category,
         "sub_category": row.get("sub_category") or "",
         "category_group": row.get("category_group"),

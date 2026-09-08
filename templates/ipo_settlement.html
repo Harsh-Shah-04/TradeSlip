@@ -36,7 +36,7 @@
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b">
       <h2 class="font-semibold text-slate-900">Buy parties (clients) — give / settle</h2>
-      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Subject 2 / Premium settle the difference: Net = Market (Shares × Listing Sold Price) − Guaranteed (Shares × Buy Rate)</p>
+      <p class="text-xs text-slate-500 mt-0.5">Click a party to filter · Payable = you pay them · Receivable = they pay you · Subject 2 settles as Market − Guaranteed · reverse Premium flips the sign so the client buyer is paid when market is above buy rate</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -63,7 +63,7 @@
   <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
     <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50/50">
       <h2 class="font-semibold text-emerald-950">Sell parties — take from (Ambica, Mama, …)</h2>
-      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Subject 2 / Premium: Vyaj = contract (Shares × Sell Rate); Net = Market (Listing Sold Price) − Contract · Brokerage = Contract − Guaranteed</p>
+      <p class="text-xs text-emerald-800 mt-0.5">Vyaj = amount from sell party · Subject 2 / normal Premium: Net = Market − Contract · reverse Premium flips that sign so the counterparty seller pays when market is above the contract rate · Brokerage stays the spread between the two trade legs</p>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">

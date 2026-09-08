@@ -10,7 +10,14 @@ from utils.ipo.allotments import (
     _pair_key,
     filter_active_allotments_for_settlement,
 )
-from utils.ipo.models import AllotmentBulkUpdate, AllotmentUpdate, CommonListingPriceRequest, allotment_to_json
+from utils.ipo.models import (
+    AllotmentBulkUpdate,
+    AllotmentUpdate,
+    CommonListingPriceRequest,
+    PositionCreate,
+    PositionUpdate,
+    allotment_to_json,
+)
 from utils.ipo.settlement import (
     _allotment_line_totals,
     _attribute_allotment_rows,
@@ -18,6 +25,9 @@ from utils.ipo.settlement import (
     _consume_attributed_rows,
     _direction,
     _party_summary,
+    _position_client_account,
+    _position_trade_direction,
+    _premium_buy_lines,
     _sell_side_financials,
     _sell_side_direction,
     _subject2_allotment_totals,
@@ -90,12 +100,72 @@ def test_premium_sell_side_negative_listing_market():
     assert amounts["net_pl"] == pytest.approx(-45200.0)
 
 
+def test_premium_reverse_trade_brokerage_stays_positive():
+    amounts = _sell_side_financials(
+        listing_sell_amt=50 * 300,
+        seller_vyaj=50 * 276,
+        buyer_vyaj=50 * 285,
+        recorded_brokerage=None,
+        premium=True,
+        client_amount=50 * 285,
+        trade_direction="counterparty_to_client",
+    )
+    assert amounts["brokerage"] == pytest.approx(450.0)
+    assert amounts["net_pl"] == pytest.approx(-1200.0)
+
+
+def test_premium_reverse_trade_ignores_stale_negative_recorded_brokerage():
+    amounts = _sell_side_financials(
+        listing_sell_amt=50 * 328,
+        seller_vyaj=50 * 276,
+        buyer_vyaj=50 * 285,
+        recorded_brokerage=-450,
+        premium=True,
+        client_amount=50 * 285,
+        trade_direction="counterparty_to_client",
+    )
+    assert amounts["brokerage"] == pytest.approx(450.0)
+    assert amounts["net_pl"] == pytest.approx(-2600.0)
+
+
 def test_allotment_bulk_update_model():
     m = AllotmentBulkUpdate(
         updates=[{"id": "a1", "status": "Not Allotted", "shares_allotted": 0}]
     )
     assert len(m.updates) == 1
     assert m.updates[0].id == "a1"
+
+
+def test_position_create_defaults_to_existing_direction():
+    payload = PositionCreate(
+        ipo_id="ipo-1",
+        trade_date="2026-09-08",
+        party_id="party-1",
+        category="Premium",
+        sub_category="Share",
+        buy_app=100,
+        buy_rate=12,
+    )
+    assert payload.trade_direction == "client_to_counterparty"
+
+
+def test_position_create_rejects_reverse_non_premium():
+    with pytest.raises(ValueError):
+        PositionCreate(
+            ipo_id="ipo-1",
+            trade_date="2026-09-08",
+            party_id="party-1",
+            trade_direction="counterparty_to_client",
+            category="IPO Application",
+            sub_category="15K",
+            buy_app=1,
+            buy_rate=100,
+        )
+
+
+def test_position_update_accepts_reverse_direction():
+    payload = PositionUpdate(trade_direction="counterparty_to_client")
+    assert payload.trade_direction == "counterparty_to_client"
 
 
 def test_allotment_to_json_orphaned():
@@ -146,6 +216,25 @@ def test_direction_and_party_summary():
     assert summary[0]["applied"] == 2
     assert summary[0]["net_pl"] == pytest.approx(-8)
     assert summary[0]["direction"] == "Payable"
+
+
+def test_position_trade_direction_defaults_backward_compatible():
+    assert _position_trade_direction({"party": "Sanjay"}) == "client_to_counterparty"
+
+
+def test_position_client_account_keeps_client_party_on_reverse_trade():
+    account = _position_client_account(
+        {
+            "party_id": "client-1",
+            "party": "Sanjay",
+            "trade_direction": "counterparty_to_client",
+        }
+    )
+    assert account == {
+        "party_id": "client-1",
+        "party_name": "Sanjay",
+        "trade_direction": "counterparty_to_client",
+    }
 
 
 def test_money_quantize():
@@ -222,6 +311,42 @@ def test_filter_active_allotments_excludes_orphans_and_archived():
     )
     ids = {r["id"] for r in active}
     assert ids == {"live", "prem-live"}
+
+
+def test_premium_buy_lines_preserve_reverse_trade_direction(monkeypatch):
+    from utils.ipo import settlement
+
+    monkeypatch.setattr(settlement, "_party_ids_by_name", lambda names: {})
+    lines = _premium_buy_lines(
+        "ipo-1",
+        positions=[
+            {
+                "id": "pos-1",
+                "party": "Sanjay",
+                "party_id": "client-1",
+                "category": "Premium",
+                "buy_app": 100,
+                "buy_rate": 10,
+                "trade_direction": "counterparty_to_client",
+            }
+        ],
+        active_allotments=[
+            {
+                "id": "allot-1",
+                "position_id": "pos-1",
+                "applicant_id": None,
+                "status": "Allotted",
+                "shares_allotted": 100,
+                "is_sold": True,
+                "sold_price": 12,
+            }
+        ],
+    )
+    assert len(lines) == 1
+    assert lines[0]["party_id"] == "client-1"
+    assert lines[0]["trade_direction"] == "counterparty_to_client"
+    assert lines[0]["net_pl"] == pytest.approx(-200.0)
+    assert lines[0]["direction"] == "Payable"
 
 
 def test_consume_attributed_rows_prevents_fifo_reuse():

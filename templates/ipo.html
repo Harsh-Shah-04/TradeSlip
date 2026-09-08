@@ -106,6 +106,13 @@
         <select id="buyParty" required class="w-full rounded-lg border border-slate-300 px-3 py-2"></select>
       </div>
       <div>
+        <label class="block text-sm font-medium mb-1" for="buyTradeDirection">TRADE DIRECTION</label>
+        <select id="buyTradeDirection" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+          <option value="client_to_counterparty">Client -> Counterparty</option>
+          <option value="counterparty_to_client">Counterparty -> Client</option>
+        </select>
+      </div>
+      <div>
         <label class="block text-sm font-medium mb-1" for="buyCategory">CATEGORY</label>
         <select id="buyCategory" required class="w-full rounded-lg border border-slate-300 px-3 py-2">
           <option value="IPO Application">IPO Application</option>
@@ -577,6 +584,40 @@
     }
   }
 
+  function isReversePremiumDirection() {
+    return (
+      document.getElementById("buyCategory").value === "Premium" &&
+      document.getElementById("buyTradeDirection").value === "counterparty_to_client"
+    );
+  }
+
+  function refreshTradeDirectionUI() {
+    const reverse = isReversePremiumDirection();
+    const tradeDirection = document.getElementById("buyTradeDirection");
+    const category = document.getElementById("buyCategory").value || "IPO Application";
+    if (category !== "Premium" && tradeDirection.value !== "client_to_counterparty") {
+      tradeDirection.value = "client_to_counterparty";
+    }
+    tradeDirection.disabled = category !== "Premium";
+    const partyLabel = reverse ? "CLIENT BUYER" : "PARTY";
+    const buyTitle = reverse ? "Record reverse Premium trade" : "Record buy";
+    const editTitle = reverse ? "Edit reverse Premium trade" : "Edit buy";
+    document.querySelector('label[for="buyParty"]').textContent = partyLabel;
+    document.getElementById("buyRateLabel").textContent = reverse ? "CLIENT BUY RATE" : "BUY RATE";
+    document.querySelector('label[for="buySellParty"]').textContent = reverse ? "COUNTERPARTY SELLER" : "SELL PARTY";
+    document.querySelector('label[for="buySellRate"]').textContent = reverse ? "COUNTERPARTY SELL RATE" : "SELL RATE";
+    document.getElementById("buySellToggleLabel").textContent = buySellOpen
+      ? (reverse ? "Hide Counterparty Sell Details" : "Hide Sell Details")
+      : (reverse ? "Add Counterparty Sell Details" : "Add Sell Details");
+
+    const editing = Boolean(document.getElementById("buyEditId").value);
+    document.getElementById("buyModalTitle").textContent = editing ? editTitle : buyTitle;
+    document.getElementById("buyModalHint").textContent = reverse
+      ? "Capture the client buy first, then optionally attach the counterparty seller in the same form."
+      : "Select Party and BUY APP. Optionally add sell details in the same form.";
+    document.getElementById("buySubmit").textContent = editing ? "Save changes" : (reverse ? "Save trade" : "Save buy");
+  }
+
   function applyCategoryUI(preferredSub) {
     if (!tradeCategoryMeta) return;
     const cat = document.getElementById("buyCategory").value || "IPO Application";
@@ -607,9 +648,11 @@
       buyApp.min = "1";
     }
     refreshApplicationAmountDisplay();
+    refreshTradeDirectionUI();
   }
 
   document.getElementById("buyCategory").addEventListener("change", () => applyCategoryUI());
+  document.getElementById("buyTradeDirection").addEventListener("change", refreshTradeDirectionUI);
   document.getElementById("buySubCategory").addEventListener("change", refreshApplicationAmountDisplay);
   document.getElementById("buyIpo").addEventListener("change", refreshApplicationAmountDisplay);
 
@@ -719,14 +762,14 @@
     const icon = document.getElementById("buySellToggleIcon");
     if (open) {
       fields.classList.remove("hidden");
-      label.textContent = "Hide Sell Details";
+      label.textContent = isReversePremiumDirection() ? "Hide Counterparty Sell Details" : "Hide Sell Details";
       icon.textContent = "−";
       if (!document.getElementById("buySellDate").value) {
         document.getElementById("buySellDate").value = document.getElementById("buyDate").value;
       }
     } else {
       fields.classList.add("hidden");
-      label.textContent = "Add Sell Details";
+      label.textContent = isReversePremiumDirection() ? "Add Counterparty Sell Details" : "Add Sell Details";
       icon.textContent = "+";
     }
   }
@@ -746,11 +789,14 @@
     const buyRate = Number(document.getElementById("buyRate").value || 0);
     const sellAmt = a * r;
     document.getElementById("buySellAmtPreview").textContent = fmt(sellAmt);
+    const brokerage = isReversePremiumDirection()
+      ? a * buyRate - sellAmt
+      : sellAmt - a * buyRate;
     // Subject 2 settles only the difference vs the guarantee, on allotted shares.
     document.getElementById("buySellBrokeragePreview").textContent =
       document.getElementById("buyCategory").value === "Subject 2"
         ? "Settles Shares × (Allotment Sold Price − Buy rate) difference after allotment (see Settlement)"
-        : fmt(sellAmt - a * buyRate);
+        : fmt(brokerage);
   }
 
   document.getElementById("buySellToggle").addEventListener("click", () => {
@@ -767,10 +813,6 @@
   function openBuyModal() {
     document.getElementById("buyError").classList.add("hidden");
     document.getElementById("buyEditId").value = "";
-    document.getElementById("buyModalTitle").textContent = "Record buy";
-    document.getElementById("buyModalHint").textContent =
-      "Select Party and BUY APP. Optionally add sell details in the same form.";
-    document.getElementById("buySubmit").textContent = "Save buy";
     document.getElementById("buySubmit").dataset.loading = "0";
     document.getElementById("buySaveProgress").classList.add("hidden");
     document.getElementById("buySaveProgress").textContent = "";
@@ -778,6 +820,7 @@
     fillBuyIpoSelect(null);
     document.getElementById("buyDate").value = TradeSlip.todayIso();
     document.getElementById("buyParty").value = "";
+    document.getElementById("buyTradeDirection").value = "client_to_counterparty";
     document.getElementById("buyCategory").value = "IPO Application";
     document.getElementById("buyApp").value = "";
     document.getElementById("buyRate").value = "";
@@ -801,10 +844,6 @@
     }
     document.getElementById("buyError").classList.add("hidden");
     document.getElementById("buyEditId").value = payload.id;
-    document.getElementById("buyModalTitle").textContent = "Edit buy";
-    document.getElementById("buyModalHint").textContent =
-      "Update buy details. BUY AMT recalculates automatically. Cannot reduce BUY APP below sold or allocated quantity.";
-    document.getElementById("buySubmit").textContent = "Save changes";
     document.getElementById("buySubmit").dataset.loading = "0";
     document.getElementById("buySaveProgress").classList.add("hidden");
     document.getElementById("buySaveProgress").textContent = "";
@@ -815,11 +854,14 @@
     fillBuyIpoSelect(payload.ipo_id);
     document.getElementById("buyDate").value = (payload.trade_date || "").slice(0, 10);
     document.getElementById("buyParty").value = payload.party_id || "";
+    document.getElementById("buyTradeDirection").value = payload.trade_direction || "client_to_counterparty";
     document.getElementById("buyCategory").value = payload.category || "IPO Application";
     applyCategoryUI(payload.sub_category || "");
     document.getElementById("buyApp").value = payload.buy_app ?? "";
     document.getElementById("buyRate").value = payload.buy_rate ?? "";
     recalcBuy();
+    document.getElementById("buyModalHint").textContent =
+      "Update trade details. BUY AMT recalculates automatically. Cannot reduce BUY APP below sold or allocated quantity.";
     document.getElementById("buyModal").classList.remove("hidden");
   }
 
@@ -859,6 +901,7 @@
       ipo_id: document.getElementById("buyIpo").value,
       trade_date: document.getElementById("buyDate").value,
       party_id: document.getElementById("buyParty").value,
+      trade_direction: document.getElementById("buyTradeDirection").value,
       category: document.getElementById("buyCategory").value,
       sub_category: document.getElementById("buySubCategory").value,
       buy_app: Number(document.getElementById("buyApp").value),
@@ -934,7 +977,10 @@
       currentDetail = payload;
       const ipoName = (payload.ipo && (payload.ipo.display_name || payload.ipo.name)) || "";
       document.getElementById("detailTitle").textContent = `${payload.party} · ${ipoName}`;
-      document.getElementById("detailSub").textContent = `${payload.trade_date} · ${payload.category}${payload.sub_category ? " / " + payload.sub_category : ""} · ${payload.status}`;
+      const directionText = payload.trade_direction === "counterparty_to_client"
+        ? "Counterparty -> Client"
+        : "Client -> Counterparty";
+      document.getElementById("detailSub").textContent = `${payload.trade_date} · ${payload.category}${payload.sub_category ? " / " + payload.sub_category : ""} · ${directionText} · ${payload.status}`;
       const qtyLabel = payload.quantity_label || "BUY APP";
       document.getElementById("detailSummary").innerHTML = `
         <div class="rounded-lg bg-slate-50 p-3"><div class="text-xs text-slate-500">${TradeSlip.escapeHtml(qtyLabel)}</div><div class="font-semibold">${fmt(payload.buy_app)}</div></div>
@@ -1151,12 +1197,15 @@
     const buyRate = Number((currentDetail && currentDetail.buy_rate) || 0);
     const sellAmt = a * r;
     const buyAmtForSold = a * buyRate;
+    const brokerage = currentDetail && currentDetail.trade_direction === "counterparty_to_client"
+      ? buyAmtForSold - sellAmt
+      : sellAmt - buyAmtForSold;
     document.getElementById("sellAmtPreview").textContent = fmt(sellAmt);
     // Subject 2 settles only the difference vs the guarantee, on allotted shares.
     document.getElementById("sellBrokeragePreview").textContent =
       currentDetail && currentDetail.category === "Subject 2"
         ? "Settles Shares × (Allotment Sold Price − Buy rate) difference after allotment (see Settlement)"
-        : fmt(sellAmt - buyAmtForSold);
+        : fmt(brokerage);
   }
   document.getElementById("sellApp").addEventListener("input", recalcSell);
   document.getElementById("sellRate").addEventListener("input", recalcSell);

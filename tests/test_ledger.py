@@ -191,6 +191,46 @@ def test_summarize_entries_empty_account_is_all_zero():
     }
 
 
+def test_ipos_with_ledger_exposes_brokerage_and_side_breakdown(monkeypatch):
+    monkeypatch.setattr(
+        ledger,
+        "_fetch_entries",
+        lambda account_type=None, account_id=None: [
+            {
+                "id": "seller-charge",
+                "ipo_id": "ipo-1",
+                "entry_type": "Settlement",
+                "amount": 5000.0,
+                "sell_party_id": "s1",
+                "party_id": None,
+            },
+            {
+                "id": "client-charge",
+                "ipo_id": "ipo-1",
+                "entry_type": "Settlement",
+                "amount": -4200.0,
+                "sell_party_id": None,
+                "party_id": "p1",
+            },
+        ],
+    )
+    monkeypatch.setattr(ledger, "_fetch_allocations", lambda charge_ids=None: [])
+    monkeypatch.setattr(
+        ledger,
+        "_ipo_names",
+        lambda: {"ipo-1": {"name": "ESDS SOFTWARE", "display_name": "", "listing_date": "2026-09-01"}},
+    )
+
+    rows = ledger.ipos_with_ledger()
+    assert len(rows) == 1
+    assert rows[0]["collect_from_sellers"] == pytest.approx(5000.0)
+    assert rows[0]["collect_from_clients"] == pytest.approx(0.0)
+    assert rows[0]["pay_clients"] == pytest.approx(4200.0)
+    assert rows[0]["pay_sellers"] == pytest.approx(0.0)
+    assert rows[0]["brokerage"] == pytest.approx(800.0)
+    assert rows[0]["status"] == "Open"
+
+
 # ----------------------------------------------------------- editing guards
 
 
