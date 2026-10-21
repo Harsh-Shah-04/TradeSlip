@@ -11,7 +11,7 @@
 </header>
 
 <section class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
-  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 items-end">
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3 items-end">
     <div>
       <label class="block text-xs font-medium text-slate-600 mb-1" for="filterIpo">IPO</label>
       <select id="filterIpo" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm"></select>
@@ -32,6 +32,12 @@
         <option value="IPO Application">IPO Application</option>
         <option value="Premium">Premium</option>
         <option value="Subject 2">Subject 2</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="filterSubCat">Sub-Cat</label>
+      <select id="filterSubCat" class="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+        <option value="">All</option>
       </select>
     </div>
     <div>
@@ -63,20 +69,33 @@
     <span id="posCount" class="text-sm text-slate-500">0</span>
   </div>
   <div class="overflow-x-auto">
-    <table class="w-full text-left text-sm">
+    <table class="table-fixed w-full text-left text-sm">
+      <colgroup>
+        <col style="width:6%" />
+        <col style="width:12%" />
+        <col style="width:8%" />
+        <col style="width:6%" />
+        <col style="width:13%" />
+        <col style="width:10%" />
+        <col style="width:12%" />
+        <col style="width:10%" />
+        <col style="width:6%" />
+        <col style="width:8%" />
+        <col style="width:9%" />
+      </colgroup>
       <thead class="bg-slate-50 text-xs uppercase text-slate-600">
         <tr>
-          <th class="px-3 py-2">Date</th>
-          <th class="px-3 py-2">IPO</th>
-          <th class="px-3 py-2">Party</th>
-          <th class="px-3 py-2">Category</th>
-          <th class="px-3 py-2">Sub-Cat</th>
-          <th class="px-3 py-2 text-right">Qty</th>
-          <th class="px-3 py-2 text-right">Sold</th>
-          <th class="px-3 py-2 text-right">Remaining</th>
-          <th class="px-3 py-2">Trade</th>
-          <th class="px-3 py-2">Allocation</th>
-          <th class="px-3 py-2 text-right">Actions</th>
+          <th class="px-2 py-2 whitespace-nowrap">Date</th>
+          <th class="px-2 py-2 truncate">IPO</th>
+          <th class="px-2 py-2 truncate">Category</th>
+          <th class="px-2 py-2 truncate">Sub-Cat</th>
+          <th class="px-2 py-2 truncate">Buy Party</th>
+          <th class="px-2 py-2 whitespace-nowrap">Buy Qty @ Rate</th>
+          <th class="px-2 py-2 truncate">Sell Party</th>
+          <th class="px-2 py-2 whitespace-nowrap">Sell Qty @ Rate</th>
+          <th class="px-2 py-2 text-right whitespace-nowrap">Remaining</th>
+          <th class="px-2 py-2 truncate">Allocation</th>
+          <th class="px-2 py-2 text-right whitespace-nowrap">Actions</th>
         </tr>
       </thead>
       <tbody id="posBody" class="divide-y divide-slate-100">
@@ -297,6 +316,7 @@
   const filterIpo = document.getElementById("filterIpo");
   const filterStatus = document.getElementById("filterStatus");
   const filterCategory = document.getElementById("filterCategory");
+  const filterSubCat = document.getElementById("filterSubCat");
   const filterParty = document.getElementById("filterParty");
   const filterSellParty = document.getElementById("filterSellParty");
   const filterSearch = document.getElementById("filterSearch");
@@ -449,6 +469,28 @@
     }
   }
 
+  function fillSubCatFilterOptions() {
+    const selected = filterSubCat.value;
+    const names = new Set();
+    allPositions.forEach((p) => {
+      if (p.sub_category) names.add(p.sub_category);
+    });
+    const sorted = Array.from(names).sort((a, b) => a.localeCompare(b));
+    filterSubCat.innerHTML =
+      '<option value="">All</option>' +
+      sorted
+        .map((name) => `<option value="${TradeSlip.escapeHtml(name)}">${TradeSlip.escapeHtml(name)}</option>`)
+        .join("");
+    if (selected && sorted.includes(selected)) filterSubCat.value = selected;
+    else if (selected) {
+      const opt = document.createElement("option");
+      opt.value = selected;
+      opt.textContent = selected;
+      filterSubCat.appendChild(opt);
+      filterSubCat.value = selected;
+    }
+  }
+
   function fillSellPartyFilterOptions() {
     const selected = filterSellParty.value;
     const names = new Set();
@@ -497,12 +539,14 @@
   function applyClientFilters() {
     const status = filterStatus.value;
     const category = filterCategory.value;
+    const subCat = filterSubCat.value;
     const party = filterParty.value;
     const sellParty = filterSellParty.value.trim().toLowerCase();
     const q = filterSearch.value.trim().toLowerCase();
     positions = allPositions.filter((p) => {
       if (status && p.status !== status) return false;
       if (category && (p.category || "") !== category) return false;
+      if (subCat && (p.sub_category || "") !== subCat) return false;
       if (party && (p.party || "") !== party) return false;
       if (sellParty) {
         const sells = positionSellParties(p).map((n) => n.toLowerCase());
@@ -519,6 +563,7 @@
     if (idx >= 0) allPositions[idx] = { ...allPositions[idx], ...item };
     else allPositions.unshift(item);
     fillPartyFilterOptions();
+    fillSubCatFilterOptions();
     fillSellPartyFilterOptions();
     applyClientFilters();
   }
@@ -666,6 +711,26 @@
       .join("");
   }
 
+  function sellRateForPosition(p) {
+    const sells = p.sells || [];
+    const totalApp = sells.reduce((s, x) => s + Number(x.sell_app || 0), 0);
+    if (!totalApp) return null;
+    const totalAmt = sells.reduce((s, x) => s + Number(x.sell_app || 0) * Number(x.sell_rate || 0), 0);
+    return totalAmt / totalApp;
+  }
+
+  function sellPartyDisplay(p) {
+    const names = Array.from(new Set(positionSellParties(p)));
+    if (!names.length) return '<span class="text-slate-400">—</span>';
+    const first = TradeSlip.escapeHtml(names[0]);
+    return names.length > 1 ? `${first} <span class="text-xs text-slate-400">+${names.length - 1}</span>` : first;
+  }
+
+  function closeAllMoreMenus() {
+    posBody.querySelectorAll(".more-menu").forEach((menu) => menu.classList.add("hidden"));
+  }
+  document.addEventListener("click", closeAllMoreMenus);
+
   function renderPositions() {
     const total = allPositions.length;
     const shown = positions.length;
@@ -684,22 +749,34 @@
       .map((p) => {
         const ipoName = (p.ipo && (p.ipo.display_name || p.ipo.name)) || "—";
         const qtyHint = p.is_premium ? "sh" : "app";
-        return `<tr class="hover:bg-slate-50">
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.trade_date)}</td>
-          <td class="px-3 py-2 font-medium">${TradeSlip.escapeHtml(ipoName)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.party)}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.category || "—")}</td>
-          <td class="px-3 py-2">${TradeSlip.escapeHtml(p.sub_category || "—")}</td>
-          <td class="px-3 py-2 text-right">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)} <span class="text-xs text-slate-400">${qtyHint}</span></td>
-          <td class="px-3 py-2 text-right">${fmt(p.sold_app)}</td>
-          <td class="px-3 py-2 text-right font-semibold">${fmt(p.remaining_app)}</td>
-          <td class="px-3 py-2">${statusBadge(p.status)}</td>
-          <td class="px-3 py-2">${p.is_premium ? '<span class="text-xs text-slate-500">N/A</span>' : `${statusBadge(p.allocation_status || "Unallocated")}<div class="text-xs text-slate-500 mt-0.5">${p.allocated_count || 0}/${Math.round(p.buy_app)}</div>`}</td>
-          <td class="px-3 py-2 text-right space-x-1 whitespace-nowrap">
-            <button type="button" class="open-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Open / Sell</button>
-            <button type="button" class="edit-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</button>
-            ${p.is_premium ? "" : `<button type="button" class="alloc-pos rounded border border-emerald-200 text-emerald-800 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Allocate</button>`}
-            <button type="button" class="del-pos rounded border border-red-200 text-red-600 px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>
+        const rowClass = p.status === "Open" ? "bg-red-50 hover:bg-red-100" : "hover:bg-slate-50";
+        return `<tr class="${rowClass}">
+          <td class="px-2 py-2 whitespace-nowrap">${TradeSlip.escapeHtml(p.trade_date)}</td>
+          <td class="px-2 py-2 font-medium truncate" title="${TradeSlip.escapeHtml(ipoName)}">${TradeSlip.escapeHtml(ipoName)}</td>
+          <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.category || "")}">${TradeSlip.escapeHtml(p.category || "—")}</td>
+          <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.sub_category || "")}">${TradeSlip.escapeHtml(p.sub_category || "—")}</td>
+          <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.party || "")}">${TradeSlip.escapeHtml(p.party)}</td>
+          <td class="px-2 py-2 whitespace-nowrap">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)} <span class="text-xs text-slate-400">${qtyHint}</span></td>
+          <td class="px-2 py-2 truncate">${sellPartyDisplay(p)}</td>
+          <td class="px-2 py-2 whitespace-nowrap">${
+            p.sold_app
+              ? `${fmt(p.sold_app)} @ ${fmt(sellRateForPosition(p))} <span class="text-xs text-slate-400">${qtyHint}</span>`
+              : '<span class="text-slate-400">—</span>'
+          }</td>
+          <td class="px-2 py-2 text-right font-semibold whitespace-nowrap">${fmt(p.remaining_app)}</td>
+          <td class="px-2 py-2 truncate">${p.is_premium ? '<span class="text-xs text-slate-500">N/A</span>' : `${statusBadge(p.allocation_status || "Unallocated")}<div class="text-xs text-slate-500 mt-0.5">${p.allocated_count || 0}/${Math.round(p.buy_app)}</div>`}</td>
+          <td class="px-2 py-2 text-right whitespace-nowrap">
+            <div class="inline-flex items-center gap-1">
+              <button type="button" class="open-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}">Open / Sell</button>
+              <div class="relative inline-block more-wrap">
+                <button type="button" class="more-pos rounded border px-2 py-1 text-xs" data-id="${TradeSlip.escapeHtml(p.id)}" aria-label="More actions">&#8943;</button>
+                <div class="more-menu hidden absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg">
+                  <button type="button" class="edit-pos block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50" data-id="${TradeSlip.escapeHtml(p.id)}">Edit</button>
+                  ${p.is_premium ? "" : `<button type="button" class="alloc-pos block w-full px-3 py-1.5 text-left text-xs text-emerald-700 hover:bg-emerald-50" data-id="${TradeSlip.escapeHtml(p.id)}">Allocate</button>`}
+                  <button type="button" class="del-pos block w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50" data-id="${TradeSlip.escapeHtml(p.id)}">Delete</button>
+                </div>
+              </div>
+            </div>
           </td>
         </tr>`;
       })
@@ -707,6 +784,15 @@
 
     posBody.querySelectorAll(".open-pos").forEach((btn) => {
       btn.addEventListener("click", () => openDetail(btn.dataset.id));
+    });
+    posBody.querySelectorAll(".more-pos").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const menu = btn.nextElementSibling;
+        const willOpen = menu.classList.contains("hidden");
+        closeAllMoreMenus();
+        if (willOpen) menu.classList.remove("hidden");
+      });
     });
     posBody.querySelectorAll(".edit-pos").forEach((btn) => {
       btn.addEventListener("click", () => openEditBuy(btn.dataset.id));
@@ -744,6 +830,7 @@
       if (!response.ok) throw new Error(TradeSlip.parseErrorDetail(payload));
       allPositions = payload.positions || [];
       fillPartyFilterOptions();
+      fillSubCatFilterOptions();
       fillSellPartyFilterOptions();
       applyClientFilters();
       if (!silent) setMsg(posStatus, "", null);
@@ -1265,6 +1352,7 @@
   filterIpo.addEventListener("change", () => loadPositions());
   filterStatus.addEventListener("change", () => applyClientFilters());
   filterCategory.addEventListener("change", () => applyClientFilters());
+  filterSubCat.addEventListener("change", () => applyClientFilters());
   filterParty.addEventListener("change", () => applyClientFilters());
   filterSellParty.addEventListener("change", () => applyClientFilters());
   filterSearch.addEventListener("input", () => {
@@ -1275,6 +1363,7 @@
     filterIpo.value = "";
     filterStatus.value = "";
     filterCategory.value = "";
+    filterSubCat.value = "";
     filterParty.value = "";
     filterSellParty.value = "";
     filterSearch.value = "";
@@ -1283,6 +1372,7 @@
 
   Promise.all([loadLabels(), loadTradeCategories(), loadActiveIpos(), loadClientMaster(), loadSellParties()]).then(() => {
     fillPartyFilterOptions();
+    fillSubCatFilterOptions();
     fillSellPartyFilterOptions();
     return loadPositions();
   });
