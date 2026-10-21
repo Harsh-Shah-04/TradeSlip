@@ -75,3 +75,4 @@ logs/
 # Vercel
 .vercel/
 .gstack/
+.vercel

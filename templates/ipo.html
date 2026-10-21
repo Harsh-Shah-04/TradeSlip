@@ -72,15 +72,15 @@
     <table class="table-fixed w-full text-left text-sm">
       <colgroup>
         <col style="width:6%" />
-        <col style="width:14%" />
-        <col style="width:9%" />
-        <col style="width:7%" />
-        <col style="width:9%" />
-        <col style="width:11%" />
-        <col style="width:9%" />
-        <col style="width:11%" />
+        <col style="width:12%" />
+        <col style="width:8%" />
         <col style="width:6%" />
-        <col style="width:9%" />
+        <col style="width:13%" />
+        <col style="width:10%" />
+        <col style="width:12%" />
+        <col style="width:10%" />
+        <col style="width:6%" />
+        <col style="width:8%" />
         <col style="width:9%" />
       </colgroup>
       <thead class="bg-slate-50 text-xs uppercase text-slate-600">
@@ -90,9 +90,9 @@
           <th class="px-2 py-2 truncate">Category</th>
           <th class="px-2 py-2 truncate">Sub-Cat</th>
           <th class="px-2 py-2 truncate">Buy Party</th>
-          <th class="px-2 py-2 text-right whitespace-nowrap">Buy Qty @ Rate</th>
+          <th class="px-2 py-2 whitespace-nowrap">Buy Qty @ Rate</th>
           <th class="px-2 py-2 truncate">Sell Party</th>
-          <th class="px-2 py-2 text-right whitespace-nowrap">Sell Qty @ Rate</th>
+          <th class="px-2 py-2 whitespace-nowrap">Sell Qty @ Rate</th>
           <th class="px-2 py-2 text-right whitespace-nowrap">Remaining</th>
           <th class="px-2 py-2 truncate">Allocation</th>
           <th class="px-2 py-2 text-right whitespace-nowrap">Actions</th>
@@ -756,9 +756,9 @@
           <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.category || "")}">${TradeSlip.escapeHtml(p.category || "—")}</td>
           <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.sub_category || "")}">${TradeSlip.escapeHtml(p.sub_category || "—")}</td>
           <td class="px-2 py-2 truncate" title="${TradeSlip.escapeHtml(p.party || "")}">${TradeSlip.escapeHtml(p.party)}</td>
-          <td class="px-2 py-2 text-right whitespace-nowrap">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)} <span class="text-xs text-slate-400">${qtyHint}</span></td>
+          <td class="px-2 py-2 whitespace-nowrap">${fmt(p.buy_app)} @ ${fmt(p.buy_rate)} <span class="text-xs text-slate-400">${qtyHint}</span></td>
           <td class="px-2 py-2 truncate">${sellPartyDisplay(p)}</td>
-          <td class="px-2 py-2 text-right whitespace-nowrap">${
+          <td class="px-2 py-2 whitespace-nowrap">${
             p.sold_app
               ? `${fmt(p.sold_app)} @ ${fmt(sellRateForPosition(p))} <span class="text-xs text-slate-400">${qtyHint}</span>`
               : '<span class="text-slate-400">—</span>'
