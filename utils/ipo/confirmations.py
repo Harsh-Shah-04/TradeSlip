@@ -418,7 +418,7 @@ def _render_workbook(
     alt_fill = PatternFill("solid", fgColor="ECFDF5")
     center = Alignment(horizontal="center", vertical="center")
 
-    ws.merge_cells("A1:G1")
+    ws.merge_cells("A1:H1")
     title_cell = ws["A1"]
     title_cell.value = title
     title_cell.font = header_font
@@ -447,6 +447,7 @@ def _render_workbook(
         "DPID",
         "PAN",
         "Category",
+        "Sub-Category",
         "Application Amount",
         rate_label,
     ]
@@ -468,6 +469,7 @@ def _render_workbook(
             app.get("dpid") or "",
             app.get("pan") or "",
             app.get("category") or "",
+            app.get("sub_category") or "",
             amount_value,
             float(app.get("rate") or 0),
         ]
@@ -478,12 +480,12 @@ def _render_workbook(
             cell.alignment = center
             if idx % 2 == 0:
                 cell.fill = alt_fill
-            if col == 6 and value not in (None, ""):
+            if col == 7 and value not in (None, ""):
                 cell.number_format = amount_format
-            elif col == 7 and value not in (None, ""):
+            elif col == 8 and value not in (None, ""):
                 cell.number_format = "#,##0.00"
 
-    widths = [8, 28, 18, 14, 18, 18, 14]
+    widths = [8, 28, 18, 14, 18, 16, 18, 14]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
